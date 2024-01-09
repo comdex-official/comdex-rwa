@@ -13,7 +13,7 @@ use cw2::set_contract_version;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{AdminList, ADMIN_LIST};
+use crate::state::{};
 
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -27,11 +27,7 @@ pub fn instantiate(
     msg: InstantiateMsg,
 ) -> StdResult<Response> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-    let cfg = AdminList {
-        admins: map_validate(deps.api, &msg.admins)?,
-        mutable: msg.mutable,
-    };
-    ADMIN_LIST.save(deps.storage, &cfg)?;
+    
     Ok(Response::default())
 }
 
