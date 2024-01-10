@@ -10,10 +10,9 @@ use cosmwasm_std::{
 
 use cw1::CanExecuteResponse;
 use cw2::set_contract_version;
-
+use cw721_base::ExecuteMsg as CW721ExecuteMsg;
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{};
 
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -27,7 +26,7 @@ pub fn instantiate(
     msg: InstantiateMsg,
 ) -> StdResult<Response> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-    
+
     Ok(Response::default())
 }
 
@@ -45,6 +44,6 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response<Empty>, ContractError> {
     match msg {
-       _ => unimplemented!()
-}
+        _ => unimplemented!(),
+    }
 }

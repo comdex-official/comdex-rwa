@@ -1,5 +1,5 @@
-use schemars::JsonSchema;
 use cosmwasm_std::{Addr, Decimal};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -16,15 +16,12 @@ pub struct InstantiateMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, Eq)]
 #[serde(rename_all = "snake_case")]
 
-pub enum ExecuteMsg 
-{
-   Tx1{}
+pub enum ExecuteMsg {
+    Tx1 {},
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
-
-    Query1{}
-    
+    Query1 {},
 }
