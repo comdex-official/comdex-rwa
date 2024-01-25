@@ -18,11 +18,15 @@ For more information on this contract, please check out the
 [README](https://github.com/CosmWasm/cw-plus/blob/main/contracts/cw1-whitelist/README.md).
 */
 
-pub mod profile;
 pub mod contract;
 pub mod error;
 pub mod msg;
 pub mod state;
-pub mod invoice;
+pub mod schedule;
+
+use cosmwasm_std::Uint128;
 
 pub use crate::error::ContractError;
+
+pub const TEN_THOUSAND: Uint128 = Uint128::new(10000u128);
+pub const SIY: Uint128 = Uint128::new(365u128 * 24u128 * 3600u128);
