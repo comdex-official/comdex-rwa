@@ -5,6 +5,7 @@ use crate::state::PaymentFrequency;
 #[cw_serde]
 pub struct InstantiateMsg {
     pub admins: Vec<String>,
+    pub token_issuer: String,
 }
 
 #[cw_serde]
@@ -16,9 +17,13 @@ pub enum ExecuteMsg {
 pub struct CreatePoolMsg {
     pub borrower: String,
     pub uid_token: Uint128,
-    pub interest_apy: u16,
+    pub interest_apr: u16,
     pub borrow_limit: Uint128,
-    pub payment_schedule: PaymentFrequency,
+    pub interest_payment_frequency: PaymentFrequency,
+    pub principal_payment_frequency: PaymentFrequency,
+    pub principal_grace_period: u64,
+    pub drawdown_period: u64,
+    pub term_length: u64,
 }
 
 #[cw_serde]

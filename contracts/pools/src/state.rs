@@ -1,7 +1,8 @@
-use crate::{error::ContractResult, ContractError};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Env, Timestamp, Uint128};
 use cw_storage_plus::{Item, Map};
+
+use crate::{credit_line::CreditLine, error::ContractResult, GRACE_PERIOD};
 
 #[cw_serde]
 pub struct Config {
@@ -49,59 +50,43 @@ impl InvestorToken {
 #[cw_serde]
 pub struct TranchePool {
     pub pool_id: u64,
-    pub interest_apy: u16,
     pub borrower_addr: Addr,
     pub creation_info: Timestamp,
-    pub payment_schedule: PaymentFrequency,
     pub drawdown_info: Option<Timestamp>,
     pub drawdown_period: u64,
     pub grace_period: u64,
     pub junior_tranche: LendInfo,
     pub senior_tranche: LendInfo,
+    pub credit_line: CreditLine,
     pub backers: Vec<u128>,
-    pub repayment_info: TermInfo,
-}
-
-#[cw_serde]
-#[derive(Default)]
-pub struct TermInfo {
-    /// Calculates interest from this point in time
-    pub term_start: Timestamp,
-    /// Last interest payment date, i.e. closing of pool
-    pub term_end: Timestamp,
-    /// the next date of payment
-    pub next_due: Timestamp,
-    /// date of lastest payment
-    pub lastest_payment: Timestamp,
-    pub last_update_ts: Timestamp,
 }
 
 impl TranchePool {
     pub fn new(
         pool_id: u64,
         borrow_limit: Uint128,
-        interest_apy: u16,
         borrower: Addr,
-        payment_schedule: PaymentFrequency,
+        drawdown_period: u64,
+        grace_period: u64,
+        credit_line: CreditLine,
         env: &Env,
     ) -> Self {
         TranchePool {
             pool_id,
-            interest_apy,
             borrower_addr: borrower,
             creation_info: env.block.time,
-            payment_schedule,
             drawdown_info: None,
-            grace_period: None,
+            drawdown_period,
+            grace_period,
             junior_tranche: LendInfo::default(),
             senior_tranche: LendInfo::default(),
             backers: Vec::new(),
-            repayment_info: TermInfo::default(),
+            credit_line,
         }
     }
 
-    pub fn set_grace_period(&mut self, new_grace_period: BlockInfo) {
-        self.grace_period = Some(new_grace_period);
+    pub fn set_grace_period(&mut self, new_grace_period: u64) {
+        self.grace_period = new_grace_period;
     }
 
     pub fn deposit(&mut self, amount: Uint128) -> ContractResult<()> {
@@ -111,79 +96,16 @@ impl TranchePool {
     }
 
     pub fn drawdown(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
-        let borrow_info = &mut self.borrow_info;
-        if borrow_info.borrowed_amount + amount > borrow_info.borrow_limit {
-            return Err(ContractError::DrawdownExceedsLimit {
-                limit: borrow_info.borrow_limit,
-            });
-        };
-        if self.drawdown_info.is_none() {
-            let repayment_info = &mut self.repayment_info;
-            repayment_info.first_drawdown = env.block.time;
-            repayment_info.last_update_ts = env.block.time;
-            repayment_info.next_due = env.block.time.plus_days(30);
-        } else {
-            // checkpoint
-        }
-        self.drawdown_info = Some(BlockInfo::new(env));
+        // should be in drawdown period
         Ok(())
     }
 
-    pub fn checkpoint(&mut self, env: &Env) -> ContractResult<()> {
-        // update interest accrued
-        self.update_interest_accrued(env)?;
-        // update interest owed
-        // update timestamp
-
-        Ok(())
-    }
-
-    pub fn interest_accrued(&self, env: &Env) -> ContractResult<Uint128> {
-        let past_interest = self.borrow_info.interest_accrued;
-        let period = env.block.time.seconds() - self.borrow_info.last_update_ts.seconds();
-        // (((borrow_amount / 10000) * interest) / 365*24*3600) * duration of borrow
-        let latest_interest = self
-            .borrow_info
-            .borrowed_amount
-            .checked_div(TEN_THOUSAND)?
-            .checked_mul(Uint128::from(self.interest_apy))?
-            .checked_div(SIY)?
-            .checked_mul(Uint128::from(period))?;
-        // !-------
-        // calculate late fee
-        // -------!
-
-        Ok(past_interest + latest_interest)
-    }
-
-    fn update_interest_accrued(&mut self, env: &Env) -> ContractResult<Uint128> {
-        self.borrow_info.interest_accrued = self.interest_accrued(env)?;
-        self.borrow_info.last_update_ts = env.block.time;
-
-        Ok(self.borrow_info.interest_accrued)
-    }
-
-    fn update_interest_owed(&mut self, env: &Env) -> ContractResult<Uint128> {
-        let owed = Uint128::zero();
-        Ok(owed)
-    }
-
-    pub fn next_due_date(&self, env: &Env) -> ContractResult<Timestamp> {
-        Ok(self.repayment_info.next_due)
-    }
-
-    pub fn interest_owed(&self, env: &Env) -> ContractResult<Uint128> {
-        if env.block.time > self.repayment_info.term_end {
-            return self.interest_accrued(env)
-        }
-
-        Ok(Uint128::zero())
-
-    }
 }
 
 #[cw_serde]
+#[derive(Default)]
 pub enum PaymentFrequency {
+    #[default]
     Monthly,
     Quaterly,
     Biannually,

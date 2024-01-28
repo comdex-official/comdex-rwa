@@ -38,4 +38,9 @@ pub enum ContractError {
     #[error("Drawdown amount exceeds total limit({limit})")]
     DrawdownExceedsLimit { limit: Uint128 },
 
+    #[error("Drawdown period has ended")]
+    NotInDrawdownPeriod,
+
+    #[error("{msg}")]
+    CustomError { msg: String }
 }

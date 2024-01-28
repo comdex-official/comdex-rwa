@@ -4,8 +4,10 @@ use cosmwasm_std::{
     to_json_binary, Addr, Deps, DepsMut, Empty, Env, MessageInfo, Response, Uint128, WasmMsg,
 };
 
+use crate::credit_line::CreditLine;
 use crate::error::{ContractError, ContractResult};
-use crate::msg::{CreatePoolMsg, DepositMsg, ExecuteMsg, InstantiateMsg, DrawdownMsg};
+use crate::helpers::get_grace_period;
+use crate::msg::{CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg};
 use crate::state::{Config, InvestorToken, TranchePool, CONFIG, TRANCHE_POOLS, WHITELISTED_TOKENS};
 use cw2::set_contract_version;
 use cw721_base::{ExecuteMsg as CW721ExecuteMsg, MintMsg};
@@ -31,7 +33,7 @@ pub fn instantiate(
         .collect();
     if admins.len() < msg.admins.len() {
         return Err(ContractError::InvalidAdmin {
-            address: msg.admins[admins.len()],
+            address: msg.admins[admins.len()].to_owned(),
         });
     };
 
@@ -39,6 +41,8 @@ pub fn instantiate(
         pool_id: 0,
         admins,
         grace_period: None,
+        token_id: 0,
+        token_issuer: deps.api.addr_validate(&msg.token_issuer)?,
     };
     CONFIG.save(deps.storage, &config)?;
 
@@ -71,6 +75,22 @@ pub fn create_pool(
     // - verify sender
     // - verify all `msg` parameters
     ensure_empty_funds(&info)?;
+    let borrower = deps.api.addr_validate(&msg.borrower)?;
+
+    let grace_period = get_grace_period(deps.as_ref())?;
+
+    // create credit line
+    let credit_line = CreditLine::new(
+        msg.borrow_limit,
+        msg.term_length,
+        msg.drawdown_period,
+        grace_period,
+        msg.principal_grace_period,
+        msg.interest_apr,
+        msg.interest_payment_frequency,
+        msg.principal_payment_frequency,
+        &env,
+    );
 
     // create pool
     let mut config = CONFIG.load(deps.as_ref().storage)?;
@@ -79,9 +99,10 @@ pub fn create_pool(
     let tranche_pool = TranchePool::new(
         config.pool_id,
         msg.borrow_limit,
-        msg.interest_apy,
-        borrower,
-        msg.payment_schedule,
+        borrower.clone(),
+        msg.drawdown_period,
+        grace_period,
+        credit_line,
         &env,
     );
     TRANCHE_POOLS.save(deps.storage, tranche_pool.pool_id, &tranche_pool)?;

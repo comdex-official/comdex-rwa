@@ -1,19 +1,27 @@
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Env, Timestamp, Uint128};
 
-use crate::error::ContractResult;
+use crate::error::{ContractError, ContractResult};
 use crate::state::PaymentFrequency;
 use crate::{SIY, TEN_THOUSAND};
 
 #[cw_serde]
+#[derive(Default)]
 pub struct BorrowInfo {
+    /// The total borrow limit approved by the backers in the proposal.
     pub borrow_limit: Uint128,
+    /// This is the total amount borrowed from the pool, this is fixed at the
+    /// end of the drawdown period
+    pub total_borrowed: Uint128,
+    /// This is the remaining borrowed amount that is yet to be repaid.
+    /// In essence, total_borrowed - principal repaid
     pub borrowed_amount: Uint128,
     pub interest_repaid: Uint128,
     pub principal_repaid: Uint128,
 }
 
 #[cw_serde]
+#[derive(Default)]
 pub struct CreditLine {
     /// Prior this date, no interest is charged
     pub term_start: Timestamp,
@@ -30,25 +38,68 @@ pub struct CreditLine {
     pub principal_frequency: PaymentFrequency,
     pub interest_accrued: Uint128,
     pub interest_owed: Uint128,
+    pub last_full_payment: Timestamp,
     pub last_update_ts: Timestamp,
 }
 
 impl CreditLine {
-    fn total_interest_due(&self, env: &Env, interest_apr: u16) -> ContractResult<Uint128> {
-        let period = env.block.time.seconds() - self.term_start.seconds();
-        Ok(Uint128::zero())
+    pub fn new(
+        borrow_limit: Uint128,
+        term_length: u64,
+        drawdown_period: u64,
+        grace_period: u64,
+        principal_grace_period: u64,
+        interest_apr: u16,
+        interest_frequncy: PaymentFrequency,
+        principal_frequency: PaymentFrequency,
+        env: &Env
+    ) -> Self {
+        let mut credit_line = CreditLine::default();
+        credit_line.term_start = env.block.time.plus_seconds(drawdown_period);
+        credit_line.term_end = credit_line.term_start.plus_seconds(term_length);
+        credit_line.grace_period = grace_period;
+        credit_line.principal_frequency = principal_frequency;
+        credit_line.interest_frequency = interest_frequncy;
+        credit_line.interest_apr = interest_apr;
+        credit_line.principal_grace_period = principal_grace_period;
+        credit_line.last_update_ts = env.block.time;
+        credit_line.borrow_info.borrow_limit = borrow_limit;
+        credit_line
     }
 
-    fn principal_due_at(&self, env: &Env) -> ContractResult<Uint128> {
-        Ok(Uint128::zero())
+    pub fn drawdown(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
+        let total_amount = self.borrow_info.borrowed_amount.checked_add(amount)?;
+        if total_amount > self.borrow_info.borrow_limit {
+            return Err(ContractError::DrawdownExceedsLimit {
+                limit: self.borrow_info.borrow_limit,
+            });
+        };
+
+        if env.block.time >= self.term_start {
+            return Err(ContractError::NotInDrawdownPeriod);
+        }
+
+        self.checkpoint(env)?;
+        self.borrow_info.borrowed_amount = total_amount;
+        self.borrow_info.total_borrowed = total_amount;
+        Ok(())
     }
 
     pub fn next_due_date(&self, env: &Env) -> ContractResult<Timestamp> {
         let _interest_due_date = self.next_interest_due_date(env)?;
         let _principal_due_date = self.next_principal_due_date(env)?;
-        if _interest_due_date > _principal_due_date {
+        if _interest_due_date < _principal_due_date {
             return Ok(_interest_due_date);
         };
+        Ok(_principal_due_date)
+    }
+
+    pub fn prev_due_date(&self, env: &Env) -> ContractResult<Timestamp> {
+        let _interest_due_date = self.prev_interest_due_date(env)?;
+        let _principal_due_date = self.prev_principal_due_date(env)?;
+        if _interest_due_date > _principal_due_date {
+            return Ok(_interest_due_date);
+        }
         Ok(_principal_due_date)
     }
 
@@ -101,14 +152,69 @@ impl CreditLine {
             .plus_seconds(abs_seconds + self.principal_frequency.to_seconds()))
     }
 
-    pub fn interest_due(&self, env: &Env) -> ContractResult<Uint128> {
+    pub fn prev_interest_due_date(&self, env: &Env) -> ContractResult<Timestamp> {
+        if env.block.time < self.term_start {
+            return Err(ContractError::CustomError {
+                msg: "Term not started yet".to_string(),
+            });
+        }
+        let seconds_till_date = env
+            .block
+            .time
+            .minus_seconds(self.term_start.seconds())
+            .seconds();
+        let periods_passed = seconds_till_date / self.principal_frequency.to_seconds();
+
+        Ok(self
+            .term_start
+            .plus_seconds(periods_passed * self.principal_frequency.to_seconds()))
+    }
+
+    pub fn prev_principal_due_date(&self, env: &Env) -> ContractResult<Timestamp> {
+        if env.block.time < self.term_start.plus_seconds(self.principal_grace_period) {
+            return Err(ContractError::CustomError {
+                msg: "Within principal grace period".to_string(),
+            });
+        };
+        let seconds_till_date = env
+            .block
+            .time
+            .minus_seconds(
+                self.term_start
+                    .plus_seconds(self.principal_grace_period)
+                    .seconds(),
+            )
+            .seconds();
+        let periods_passed = seconds_till_date / self.principal_frequency.to_seconds();
+
+        Ok(self
+            .term_start
+            .plus_seconds(periods_passed * self.principal_frequency.to_seconds()))
+    }
+
+    pub fn _interest_accrued(&self, env: &Env) -> ContractResult<Uint128> {
         if env.block.time < self.term_start {
             return Ok(Uint128::zero());
         }
         let past_interest = self.interest_accrued;
-        let period = env.block.time.seconds() - self.last_update_ts.seconds();
+        let latest_interest = self.interest_over_period(self.last_update_ts, env.block.time)?;
+
+        Ok(past_interest + latest_interest)
+    }
+
+    pub fn interest_over_period(
+        &self,
+        begin: Timestamp,
+        end: Timestamp,
+    ) -> ContractResult<Uint128> {
+        if end < begin {
+            return Err(ContractError::CustomError {
+                msg: "end timestamp is smaller than begin timestamp".to_string(),
+            });
+        }
+        let period = end.minus_seconds(begin.seconds()).seconds();
         // (((borrow_amount / 10000) * interest) / 365*24*3600) * duration of borrow
-        let latest_interest = self
+        let interest = self
             .borrow_info
             .borrowed_amount
             .checked_div(TEN_THOUSAND)?
@@ -119,10 +225,65 @@ impl CreditLine {
         // calculate late fee
         // -------!
 
-        Ok(past_interest + latest_interest)
+        Ok(interest)
     }
 
-    pub fn principal_due(env: &Env) -> ContractResult<Uint128> {
-        Ok(Uint128::zero())
+    pub fn _interest_owed(&self, env: &Env) -> ContractResult<Uint128> {
+        if env.block.time > self.term_end {
+            return Ok(self.interest_accrued
+                + self.interest_over_period(self.last_update_ts, env.block.time)?);
+        }
+        let prev_interest_due_date = self.prev_interest_due_date(env)?;
+        if self.last_update_ts <= prev_interest_due_date && prev_interest_due_date <= env.block.time
+        {
+            self.interest_accrued
+                + self.interest_over_period(self.last_update_ts, env.block.time)?;
+        }
+        Ok(self.interest_owed)
+    }
+
+    pub fn checkpoint(&mut self, env: &Env) -> ContractResult<()> {
+        self.interest_accrued = self._interest_accrued(env)?;
+        self.interest_owed = self._interest_owed(env)?;
+        self.last_update_ts = env.block.time;
+        Ok(())
+    }
+
+    pub fn _principal_owed(&self, env: &Env) -> ContractResult<Uint128> {
+        if env.block.time < self.term_start.plus_seconds(self.principal_grace_period) {
+            return Ok(Uint128::zero());
+        }
+        let periods_passed = env
+            .block
+            .time
+            .minus_seconds(
+                self.term_start
+                    .plus_seconds(self.principal_grace_period)
+                    .seconds(),
+            )
+            .seconds()
+            / self.principal_frequency.to_seconds();
+        let total_principal_payments = self
+            .term_end
+            .minus_seconds(self.term_start.seconds())
+            .seconds()
+            / self.principal_frequency.to_seconds();
+        Ok(self
+            .borrow_info
+            .total_borrowed
+            .checked_div(Uint128::from(total_principal_payments))?
+            .checked_mul(Uint128::from(periods_passed))?)
+    }
+
+    pub fn interest_owed(&self, env: &Env) -> ContractResult<Uint128> {
+        return Ok(self._interest_owed(env)?.saturating_sub(self.borrow_info.interest_repaid))
+    }
+
+    pub fn interest_accrued(&self, env: &Env) -> ContractResult<Uint128> {
+        return Ok(self._interest_accrued(env)?)
+    }
+
+    pub fn principal_owed(&self, env: &Env) -> ContractResult<Uint128> {
+        return Ok(self._principal_owed(env)?)
     }
 }
