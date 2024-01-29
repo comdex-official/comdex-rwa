@@ -140,7 +140,8 @@ pub fn deposit(
     let mut pool = TRANCHE_POOLS
         .load(deps.storage, msg.pool_id)
         .map_err(|_| ContractError::InvalidPoolId { id: msg.pool_id })?;
-    pool.deposit(msg.amount)?;
+    pool.deposit(msg.amount, &env)?;
+    TRANCHE_POOLS.save(deps.storage, msg.pool_id, &pool)?;
 
     let mut config = CONFIG.load(deps.storage)?;
     config.token_id += 1;

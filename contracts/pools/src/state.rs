@@ -2,7 +2,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Env, Timestamp, Uint128};
 use cw_storage_plus::{Item, Map};
 
-use crate::{credit_line::CreditLine, error::ContractResult, GRACE_PERIOD};
+use crate::{credit_line::CreditLine, error::ContractResult};
 
 #[cw_serde]
 pub struct Config {
@@ -89,14 +89,13 @@ impl TranchePool {
         self.grace_period = new_grace_period;
     }
 
-    pub fn deposit(&mut self, amount: Uint128) -> ContractResult<()> {
-        self.junior_tranche.principal_deposited.checked_add(amount);
-
+    pub fn deposit(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
+        self.credit_line.drawdown(amount, env)?;
         Ok(())
     }
 
     pub fn drawdown(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
-        // should be in drawdown period
+        self.credit_line.drawdown(amount, env)?;
         Ok(())
     }
 
