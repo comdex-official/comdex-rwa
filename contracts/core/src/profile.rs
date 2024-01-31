@@ -211,6 +211,7 @@ pub fn create_profile(
         assigned_invoices: vec![],
         generated_invoices: vec![],
     };
+    
     CONTACT_INFO.save(deps.storage, &info.sender, &new_contact_info)?;
 
     Ok(Response::new())

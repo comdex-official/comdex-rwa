@@ -1,8 +1,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use cosmwasm_std::{Addr, Coin,DepsMut,Deps};
+use cosmwasm_std::{Addr, Coin,DepsMut,Deps,Response,StdError,StdResult};
 use cw_storage_plus::{Item, Map};
+use crate::error::ContractError;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -95,5 +96,14 @@ pub fn get_invoice_id(deps: Deps) -> u64 {
     let mut id = INVOICE_ID.load(deps.storage).unwrap_or_default();
     id += 1;
     id
+}
+
+pub fn set_config(deps: DepsMut, nft_address: Addr, owner: Addr) -> Result<Response, ContractError>{
+    let config = Config {
+        nft_address: nft_address,
+        owner: owner,
+    };
+    CONFIG.save(deps.storage, &config).unwrap();
+    Ok(Response::new())
 }
 

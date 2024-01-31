@@ -4,6 +4,7 @@ use cosmwasm_std::{
     entry_point, to_binary, Addr, Api, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
     Response, StdError, StdResult,WasmMsg,SubMsg,
 };
+
 use cw721_base::msg::ExecuteMsg;
 use cw721_base::msg::MintMsg;
 use crate::error::ContractError;
@@ -16,6 +17,7 @@ pub fn create_invoice(
     info: MessageInfo,
     alias: String,
     address: Addr,
+
 ) -> Result<Response, ContractError> {
     //// Address cannot be sender////
     if info.sender == address {
@@ -99,6 +101,7 @@ pub fn create_invoice(
         msg: to_binary(&msg)?,
         funds: vec![],
     });
+
 
     Ok(Response::new().add_submessage(message))
 }

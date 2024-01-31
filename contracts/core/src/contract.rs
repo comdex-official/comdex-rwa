@@ -13,7 +13,9 @@ use cw2::set_contract_version;
 use cw721_base::ExecuteMsg as CW721ExecuteMsg;
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-
+use crate::state;
+use crate::invoice;
+use crate::profile;
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -44,6 +46,18 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response<Empty>, ContractError> {
     match msg {
-        _ => unimplemented!(),
+       ExecuteMsg::CreateRequest{alias,address} => {
+           profile::create_request(deps,env,info,alias,address)
+       },
+         ExecuteMsg::AcceptRequest{alias,address} => {
+              profile::accept_request(deps,env,info,address,alias)
+         },
+            ExecuteMsg::CreateProfile{name,address,jurisdiction,email_id,kyc_type} => {
+                profile::create_profile(deps,env,info,name,address,jurisdiction,email_id,kyc_type)
+            },
+            ExecuteMsg::SetConfig{nft_address,owner} => {
+                state::set_config(deps,nft_address,owner)
+            },
+
     }
 }
