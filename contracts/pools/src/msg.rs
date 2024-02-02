@@ -6,6 +6,7 @@ use crate::state::PaymentFrequency;
 pub struct InstantiateMsg {
     pub admins: Vec<String>,
     pub token_issuer: String,
+    pub usdc_denom: String,
 }
 
 #[cw_serde]
@@ -34,6 +35,11 @@ pub struct DepositMsg {
 
 #[cw_serde]
 pub struct DrawdownMsg {
+    pub pool_id: u64,
+    pub amount: Uint128,
+}
+
+pub struct RepayMsg {
     pub pool_id: u64,
     pub amount: Uint128,
 }

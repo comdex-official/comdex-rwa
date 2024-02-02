@@ -1,14 +1,17 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Addr, Deps, DepsMut, Empty, Env, MessageInfo, Response, Uint128, WasmMsg,
+    coins, to_json_binary, Addr, BankMsg, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
+    Response, Uint128, WasmMsg,
 };
 
 use crate::credit_line::CreditLine;
 use crate::error::{ContractError, ContractResult};
 use crate::helpers::get_grace_period;
-use crate::msg::{CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg};
-use crate::state::{Config, InvestorToken, TranchePool, CONFIG, TRANCHE_POOLS, WHITELISTED_TOKENS};
+use crate::msg::{CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, RepayMsg};
+use crate::state::{
+    Config, InvestorToken, TranchePool, CONFIG, TRANCHE_POOLS, USDC, WHITELISTED_TOKENS,
+};
 use cw2::set_contract_version;
 use cw721_base::{ExecuteMsg as CW721ExecuteMsg, MintMsg};
 
@@ -45,6 +48,7 @@ pub fn instantiate(
         token_issuer: deps.api.addr_validate(&msg.token_issuer)?,
     };
     CONFIG.save(deps.storage, &config)?;
+    USDC.save(deps.storage, &msg.usdc_denom)?;
 
     Ok(Response::default())
 }
@@ -122,13 +126,19 @@ pub fn deposit(
         1 => {}
         _ => return Err(ContractError::MultipleTokens),
     };
-
-    let iswhitelisted = WHITELISTED_TOKENS
-        .may_load(deps.storage, info.funds[0].denom.clone())?
-        .unwrap_or_default();
-    if !iswhitelisted {
-        return Err(ContractError::Unauthorized {});
+    let usdc_denom = USDC.load(deps.storage)?;
+    if info.funds[0].denom == usdc_denom {
+        return Err(ContractError::CustomError {
+            msg: "Not USDC".to_string(),
+        });
     }
+
+    //let iswhitelisted = WHITELISTED_TOKENS
+    //.may_load(deps.storage, info.funds[0].denom.clone())?
+    //.unwrap_or_default();
+    //if !iswhitelisted {
+    //return Err(ContractError::Unauthorized {});
+    //}
 
     if info.funds[0].amount != msg.amount {
         return Err(ContractError::FundDiscrepancy {
@@ -163,13 +173,60 @@ pub fn deposit(
     Ok(Response::new().add_message(msg))
 }
 
-pub fn drawdown(deps: DepsMut, env: Env, msg: DrawdownMsg) -> ContractResult<Response> {
+pub fn drawdown(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    msg: DrawdownMsg,
+) -> ContractResult<Response> {
     // load pool info
-    let pool = load_pool(deps.as_ref(), msg.pool_id)?;
+    let mut pool = load_pool(deps.as_ref(), msg.pool_id)?;
     // assert amount < available limit
     // assert msg.sender == borrower
     // assert no default
+    if info.sender != pool.borrower_addr {
+        return Err(ContractError::Unauthorized {});
+    }
+    pool.drawdown(msg.amount, &env)?;
     // transfer amount to user
+    let usdc_denom = USDC.load(deps.storage)?;
+    let msg = CosmosMsg::Bank(BankMsg::Send {
+        to_address: info.sender.to_string(),
+        amount: coins(msg.amount.u128(), usdc_denom),
+    });
+    Ok(Response::new().add_message(msg))
+}
+
+pub fn repay(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    mut msg: RepayMsg,
+) -> ContractResult<Response> {
+    if info.funds.is_empty() {
+        return Err(ContractError::EmptyFunds);
+    } else if info.funds.len() > 1 {
+        return Err(ContractError::MultipleTokens);
+    }
+    if info.funds[0].amount != msg.amount {
+        return Err(ContractError::FundDiscrepancy {
+            required: msg.amount,
+            sent: info.funds[0].amount,
+        });
+    }
+    let usdc_denom = USDC.load(deps.storage)?;
+    if info.funds[0].denom != usdc_denom {
+        return Err(ContractError::CustomError {
+            msg: "Not USDC".to_string(),
+        });
+    }
+    let mut pool = load_pool(deps.as_ref(), msg.pool_id)?;
+    let pending_payments = pool.repay(&mut msg.amount, &env)?;
+
+    // !-------
+    // Handle pending_payments
+    // -------!
+
     Ok(Response::new())
 }
 

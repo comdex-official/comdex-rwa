@@ -1,5 +1,5 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Env, Timestamp, Uint128};
+use cosmwasm_std::{Addr, Decimal, Env, Timestamp, Uint128};
 use cw_storage_plus::{Item, Map};
 
 use crate::{credit_line::CreditLine, error::ContractResult};
@@ -95,10 +95,84 @@ impl TranchePool {
     }
 
     pub fn drawdown(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
+        self.drawdown_info = Some(env.block.time);
         self.credit_line.drawdown(amount, env)?;
         Ok(())
     }
 
+    pub fn repay(&mut self, amount: &mut Uint128, env: &Env) -> ContractResult<(Uint128, Uint128)> {
+        let interest_owed = self.credit_line.interest_owed(env)?;
+        let principal_owed = self.credit_line.principal_owed(env)?;
+        let repay_interest = if *amount >= interest_owed {
+            interest_owed
+        } else {
+            *amount
+        };
+        *amount = amount.saturating_sub(repay_interest);
+        let repay_principal = if *amount >= principal_owed {
+            principal_owed
+        } else {
+            *amount
+        };
+        let pending_amounts = self
+            .credit_line
+            .repay(repay_interest, repay_principal, env)?;
+        Ok(pending_amounts)
+    }
+
+    pub fn withdraw_max(&mut self, investor_token: &mut InvestorToken) -> ContractResult<Uint128> {
+        let (withdrawable_interest, withdrawable_principal) = self
+            .credit_line
+            .redeemable_interest_and_amount(&investor_token.lend_info)?;
+
+        let amount = withdrawable_interest.checked_add(withdrawable_principal)?;
+        Ok(amount)
+    }
+
+    pub fn available_to_withdraw(
+        &self,
+        lend_info: &LendInfo,
+        env: &Env,
+    ) -> ContractResult<(Uint128, Uint128)> {
+        if env.block.time < self.credit_line.term_start {
+            return Ok((Uint128::zero(), Uint128::zero()));
+        }
+        Ok(self.credit_line.redeemable_interest_and_amount(lend_info)?)
+    }
+
+    pub fn expected_share_price(&mut self, amount: Uint128) -> ContractResult<Decimal> {
+        let principal_deposited = self
+            .junior_tranche
+            .principal_deposited
+            .checked_add(self.senior_tranche.principal_deposited)?;
+        let share_price = CreditLine::usdc_to_share_price(amount, principal_deposited)?;
+        self.scale_by_percent_ownership(share_price)
+    }
+
+    pub fn scale_by_percent_ownership(&self, share_price: Decimal) -> ContractResult<Decimal> {
+        let total_deposited = self
+            .junior_tranche
+            .principal_deposited
+            .checked_add(self.senior_tranche.principal_deposited)?;
+        self.scale_by_fraction(
+            share_price,
+            total_deposited,
+            self.credit_line.borrow_info.total_borrowed,
+        )
+    }
+
+    pub fn scale_by_fraction(
+        &self,
+        amount: Decimal,
+        total_deposited: Uint128,
+        total_deployed: Uint128,
+    ) -> ContractResult<Decimal> {
+        let deposited = Decimal::new(total_deposited);
+        let deployed = Decimal::new(total_deployed);
+        let result = deployed.checked_div(deposited)?.checked_mul(amount)?;
+
+        Ok(result)
+    }
 }
 
 #[cw_serde]
@@ -136,3 +210,4 @@ pub const CONFIG: Item<Config> = Item::new("pool_config");
 pub const TRANCHE_POOLS: Map<u64, TranchePool> = Map::new("tranche_pools");
 pub const BORROWERS: Map<Addr, ACI> = Map::new("borrowers");
 pub const WHITELISTED_TOKENS: Map<String, bool> = Map::new("whitelisted_tokens");
+pub const USDC: Item<String> = Item::new("usdc_denom");
