@@ -1,5 +1,5 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::Empty;
+use cosmwasm_std::{Empty, Uint128};
 use cw2::set_contract_version;
 pub use cw721_base::{ContractError, InstantiateMsg, MigrateMsg, MintMsg, MinterResponse};
 
@@ -8,28 +8,39 @@ const CONTRACT_NAME: &str = "crates.io:cw721-metadata-onchain";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cw_serde]
-pub struct Trait {
-    pub display_type: Option<String>,
-    pub trait_type: String,
-    pub value: String,
+pub struct LendInfo {
+    pub principal_deposited: Uint128,
+    pub principal_redeemed: Uint128,
+    pub interest_redeemed: Uint128,
 }
 
-// see: https://docs.opensea.io/docs/metadata-standards
+impl Default for LendInfo {
+    fn default() -> Self {
+        LendInfo {
+            principal_deposited: Uint128::zero(),
+            principal_redeemed: Uint128::zero(),
+            interest_redeemed: Uint128::zero(),
+        }
+    }
+}
+
 #[cw_serde]
-#[derive(Default)]
-pub struct Metadata {
-    pub image: Option<String>,
-    pub image_data: Option<String>,
-    pub external_url: Option<String>,
-    pub description: Option<String>,
-    pub name: Option<String>,
-    pub attributes: Option<Vec<Trait>>,
-    pub background_color: Option<String>,
-    pub animation_url: Option<String>,
-    pub youtube_url: Option<String>,
+pub struct InvestorToken {
+    pub token_id: u128,
+    pub pool_id: u64,
+    pub lend_info: LendInfo,
 }
 
-pub type Extension = Option<Metadata>;
+impl InvestorToken {
+    pub fn new(token_id: u128, pool_id: u64) -> Self {
+        InvestorToken {
+            token_id,
+            pool_id,
+            lend_info: LendInfo::default(),
+        }
+    }
+}
+pub type Extension = Option<InvestorToken>;
 
 pub type Cw721MetadataContract<'a> =
     cw721_base::Cw721Contract<'a, Extension, Empty, Empty, Empty, Empty>;

@@ -2,7 +2,9 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Decimal, Env, Timestamp, Uint128};
 use cw_storage_plus::{Item, Map};
 
-use crate::{credit_line::CreditLine, error::ContractResult};
+pub use cw721_metadata_onchain::{InvestorToken, LendInfo};
+
+use crate::{credit_line::CreditLine, error::ContractResult, ContractError};
 
 #[cw_serde]
 pub struct Config {
@@ -11,40 +13,6 @@ pub struct Config {
     pub token_id: u128,
     pub admins: Vec<Addr>,
     pub grace_period: Option<u64>,
-}
-
-#[cw_serde]
-pub struct LendInfo {
-    pub principal_deposited: Uint128,
-    pub principal_redeemed: Uint128,
-    pub interest_redeemed: Uint128,
-}
-
-impl Default for LendInfo {
-    fn default() -> Self {
-        LendInfo {
-            principal_deposited: Uint128::zero(),
-            principal_redeemed: Uint128::zero(),
-            interest_redeemed: Uint128::zero(),
-        }
-    }
-}
-
-#[cw_serde]
-pub struct InvestorToken {
-    pub token_id: u128,
-    pub pool_id: u64,
-    pub lend_info: LendInfo,
-}
-
-impl InvestorToken {
-    pub fn new(token_id: u128, pool_id: u64) -> Self {
-        InvestorToken {
-            token_id,
-            pool_id,
-            lend_info: LendInfo::default(),
-        }
-    }
 }
 
 #[cw_serde]
@@ -90,13 +58,23 @@ impl TranchePool {
     }
 
     pub fn deposit(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
-        self.credit_line.drawdown(amount, env)?;
+        if env.block.time > self.credit_line.term_start {
+            return Err(ContractError::CustomError {
+                msg: "Deposits not allowed after term start".to_string(),
+            });
+        }
+        let junior_principal = self.junior_tranche.principal_deposited;
+        self.junior_tranche.principal_deposited = junior_principal.checked_add(amount)?;
+
         Ok(())
     }
 
     pub fn drawdown(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
+        let total_principal = (self.junior_tranche.principal_deposited
+            - self.junior_tranche.principal_redeemed)
+            + (self.senior_tranche.principal_deposited - self.senior_tranche.principal_redeemed);
+        self.credit_line.drawdown(amount, total_principal, env)?;
         self.drawdown_info = Some(env.block.time);
-        self.credit_line.drawdown(amount, env)?;
         Ok(())
     }
 
@@ -188,10 +166,10 @@ pub enum PaymentFrequency {
 impl PaymentFrequency {
     pub fn to_seconds(&self) -> u64 {
         match self {
-            PaymentFrequency::Monthly => 30u64 * 3600u64,
-            PaymentFrequency::Quaterly => 90u64 * 3600u64,
-            PaymentFrequency::Biannually => 180u64 * 3600u64,
-            PaymentFrequency::Annually => 360u64 * 3600u64,
+            PaymentFrequency::Monthly => 30u64 * 3600u64 * 24,
+            PaymentFrequency::Quaterly => 90u64 * 3600u64 * 24,
+            PaymentFrequency::Biannually => 180u64 * 3600u64 * 24,
+            PaymentFrequency::Annually => 360u64 * 3600u64 * 24,
         }
     }
 }
@@ -199,7 +177,6 @@ impl PaymentFrequency {
 /// Access Control Info
 #[cw_serde]
 pub struct ACI {
-    pub borrower: Addr,
     /// max borrow amount
     pub borrow_limit: Addr,
     /// number of pools that the borrower can create
@@ -211,3 +188,4 @@ pub const TRANCHE_POOLS: Map<u64, TranchePool> = Map::new("tranche_pools");
 pub const BORROWERS: Map<Addr, ACI> = Map::new("borrowers");
 pub const WHITELISTED_TOKENS: Map<String, bool> = Map::new("whitelisted_tokens");
 pub const USDC: Item<String> = Item::new("usdc_denom");
+pub const KYC: Map<Addr, bool> = Map::new("user_kyc");

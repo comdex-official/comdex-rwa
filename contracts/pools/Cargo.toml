@@ -1,6 +1,6 @@
 [package]
-name = "Pool"
-version = "0.0.1"
+name = "pool"
+version = "0.0.2"
 authors = ["comdex"]
 edition = "2021"
 description = "Core RWA Contracts"
@@ -29,6 +29,7 @@ schemars = "0.8.15"
 serde = { version = "1.0.188", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.49" }
 cw721-base = { path = "../cw721-base", version = "0.15.0", features = ["library"] }
+cw721-metadata-onchain = { path = "../cw721-metadata-onchain", features = ["library"] }
 
 [dev-dependencies]
 anyhow = "1"

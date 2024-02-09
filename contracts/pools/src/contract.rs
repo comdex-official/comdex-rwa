@@ -2,18 +2,20 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     coins, to_json_binary, Addr, BankMsg, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
-    Response, Uint128, WasmMsg,
+    Response, StdError, Uint128, WasmMsg,
 };
 
 use crate::credit_line::CreditLine;
 use crate::error::{ContractError, ContractResult};
 use crate::helpers::get_grace_period;
-use crate::msg::{CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, RepayMsg};
+use crate::msg::{
+    CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, RepayMsg,
+};
 use crate::state::{
-    Config, InvestorToken, TranchePool, CONFIG, TRANCHE_POOLS, USDC, WHITELISTED_TOKENS,
+    Config, InvestorToken, TranchePool, CONFIG, KYC, TRANCHE_POOLS, USDC, WHITELISTED_TOKENS,
 };
 use cw2::set_contract_version;
-use cw721_base::{ExecuteMsg as CW721ExecuteMsg, MintMsg};
+use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg};
 
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -22,7 +24,7 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: InstantiateMsg,
 ) -> ContractResult<Response> {
@@ -50,7 +52,22 @@ pub fn instantiate(
     CONFIG.save(deps.storage, &config)?;
     USDC.save(deps.storage, &msg.usdc_denom)?;
 
-    Ok(Response::default())
+    let cw721_msg = Cw721IntantiateMsg {
+        name: "PoolToken".to_string(),
+        symbol: "PoTo".to_string(),
+        collection_uri: None,
+        minter: env.contract.address.to_string(),
+        metadata: Empty {},
+    };
+    let cosmos_msg = CosmosMsg::Wasm(WasmMsg::Instantiate {
+        admin: Some(info.sender.to_string()),
+        code_id: msg.code_id,
+        msg: to_json_binary(&cw721_msg)?,
+        funds: vec![],
+        label: "Pool Token".to_string(),
+    });
+
+    Ok(Response::default().add_message(cosmos_msg))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -64,7 +81,25 @@ pub fn execute(
 ) -> ContractResult<Response> {
     match msg {
         ExecuteMsg::NewPool { msg } => create_pool(deps, env, info, msg),
+        ExecuteMsg::UpdateKyc { user, kyc_status } => {
+            update_user_kyc(deps, env, info, user, kyc_status)
+        }
+        ExecuteMsg::Deposit { msg } => deposit(deps, env, info, msg),
+        ExecuteMsg::Repay { msg } => repay(deps, env, info, msg),
+        ExecuteMsg::Drawdown { msg } => drawdown(deps, env, info, msg),
     }
+}
+
+pub fn update_user_kyc(
+    deps: DepsMut,
+    _env: Env,
+    _info: MessageInfo,
+    user: Addr,
+    kyc_status: bool,
+) -> ContractResult<Response> {
+    KYC.save(deps.storage, user.clone(), &kyc_status)?;
+
+    Ok(Response::new().add_attribute(user.to_string(), kyc_status.to_string()))
 }
 
 pub fn create_pool(
@@ -80,6 +115,14 @@ pub fn create_pool(
     // - verify all `msg` parameters
     ensure_empty_funds(&info)?;
     let borrower = deps.api.addr_validate(&msg.borrower)?;
+    if info.sender != borrower {
+        return Err(ContractError::Unauthorized {});
+    };
+    if !has_kyc(deps.as_ref(), borrower.clone())? {
+        return Err(ContractError::CustomError {
+            msg: "non-KYC user".to_string(),
+        });
+    }
 
     let grace_period = get_grace_period(deps.as_ref())?;
 
@@ -111,7 +154,9 @@ pub fn create_pool(
     );
     TRANCHE_POOLS.save(deps.storage, tranche_pool.pool_id, &tranche_pool)?;
 
-    Ok(Response::new().add_attribute("method", "create_pool"))
+    Ok(Response::new()
+        .add_attribute("method", "create_pool")
+        .add_attribute("pool_id", config.pool_id.to_string()))
 }
 
 pub fn deposit(
@@ -120,6 +165,14 @@ pub fn deposit(
     info: MessageInfo,
     msg: DepositMsg,
 ) -> ContractResult<Response> {
+    // !-------
+    // the addr of user should be in the backer list to allow deposit
+    // -------!
+    if !has_kyc(deps.as_ref(), info.sender.clone())? {
+        return Err(ContractError::CustomError {
+            msg: "non-KYC user".to_string(),
+        });
+    }
     match info.funds.len() {
         0 => return Err(ContractError::EmptyFunds),
         1 if info.funds[0].amount.is_zero() => return Err(ContractError::EmptyFunds),
@@ -127,7 +180,7 @@ pub fn deposit(
         _ => return Err(ContractError::MultipleTokens),
     };
     let usdc_denom = USDC.load(deps.storage)?;
-    if info.funds[0].denom == usdc_denom {
+    if info.funds[0].denom != usdc_denom {
         return Err(ContractError::CustomError {
             msg: "Not USDC".to_string(),
         });
@@ -179,6 +232,11 @@ pub fn drawdown(
     info: MessageInfo,
     msg: DrawdownMsg,
 ) -> ContractResult<Response> {
+    if !has_kyc(deps.as_ref(), info.sender.clone())? {
+        return Err(ContractError::CustomError {
+            msg: "non-KYC user".to_string(),
+        });
+    }
     // load pool info
     let mut pool = load_pool(deps.as_ref(), msg.pool_id)?;
     // assert amount < available limit
@@ -203,6 +261,11 @@ pub fn repay(
     info: MessageInfo,
     mut msg: RepayMsg,
 ) -> ContractResult<Response> {
+    if !has_kyc(deps.as_ref(), info.sender.clone())? {
+        return Err(ContractError::CustomError {
+            msg: "non-KYC user".to_string(),
+        });
+    }
     if info.funds.is_empty() {
         return Err(ContractError::EmptyFunds);
     } else if info.funds.len() > 1 {
@@ -258,4 +321,25 @@ fn ensure_empty_funds(info: &MessageInfo) -> ContractResult<()> {
         _ => return Err(ContractError::FundsNotAllowed),
     }
     Ok(())
+}
+
+pub fn has_kyc(deps: Deps, user: Addr) -> ContractResult<bool> {
+    Ok(KYC.may_load(deps.storage, user)?.unwrap_or(false))
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult<Response> {
+    let ver = cw2::get_contract_version(deps.storage)?;
+    // ensure we are migrating from an allowed contract
+    if ver.contract != CONTRACT_NAME {
+        return Err(StdError::generic_err("Can only upgrade from same type").into());
+    }
+    // note: better to do proper semver compare, but string compare *usually* works
+    if ver.version.as_str() > CONTRACT_VERSION {
+        return Err(StdError::generic_err("Cannot upgrade from a newer version").into());
+    }
+    // set the new version
+    cw2::set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+    Ok(Response::default())
 }

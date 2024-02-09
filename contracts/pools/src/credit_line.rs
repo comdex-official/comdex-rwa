@@ -71,13 +71,23 @@ impl CreditLine {
         credit_line
     }
 
-    pub fn drawdown(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
+    pub fn drawdown(
+        &mut self,
+        amount: Uint128,
+        total_principal: Uint128,
+        env: &Env,
+    ) -> ContractResult<()> {
         let total_amount = self.borrow_info.borrowed_amount.checked_add(amount)?;
         if total_amount > self.borrow_info.borrow_limit {
             return Err(ContractError::DrawdownExceedsLimit {
                 limit: self.borrow_info.borrow_limit,
             });
         };
+        if total_amount > total_principal {
+            return Err(ContractError::DrawdownExceedsLimit {
+                limit: total_principal,
+            });
+        }
 
         if env.block.time >= self.term_start {
             return Err(ContractError::NotInDrawdownPeriod);
@@ -85,7 +95,7 @@ impl CreditLine {
 
         self.checkpoint(env)?;
         self.borrow_info.borrowed_amount = total_amount;
-        self.borrow_info.total_borrowed.checked_add(total_amount)?;
+        self.borrow_info.total_borrowed = self.borrow_info.total_borrowed.checked_add(amount)?;
         Ok(())
     }
 
@@ -240,8 +250,8 @@ impl CreditLine {
         let prev_interest_due_date = self.prev_interest_due_date(env)?;
         if self.last_update_ts <= prev_interest_due_date && prev_interest_due_date <= env.block.time
         {
-            self.interest_accrued
-                + self.interest_over_period(self.last_update_ts, env.block.time)?;
+            return Ok(self.interest_accrued
+                + self.interest_over_period(self.last_update_ts, env.block.time)?);
         }
         Ok(self.interest_owed)
     }
@@ -379,5 +389,4 @@ impl CreditLine {
             max_interest_redeemable.checked_sub(lend_info.interest_redeemed)?;
         Ok((redeemable_interest, redeemable_principal))
     }
-
 }
