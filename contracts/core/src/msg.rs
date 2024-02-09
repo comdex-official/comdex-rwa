@@ -2,9 +2,9 @@ use cosmwasm_std::{Addr, Decimal};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use crate::state;
+use crate::state::*;
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{CosmosMsg, Empty};
+use cosmwasm_std::{CosmosMsg, Empty,Coin};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -18,41 +18,40 @@ pub struct InstantiateMsg {
 
 pub enum ExecuteMsg {
     CreateRequest{
-        alias: String,
         address: Addr,
     },
     AcceptRequest{
-        alias: String,
         address: Addr,
     },
 
     CreateProfile{
         name: String,
-        address: String,
-        jurisdiction: String,
         email_id: String,
-        kyc_type: String,
+        phone_number: String,
+        company_name: String,
+        address: String,
     },
-    // CreateInvoice{
-    //     invoice_id: u64,
-    //     amount: Decimal,
-    //     currency: String,
-    //     due_date: String,
-    //     service_type: String,
-    //     status: String,
-    //     description: String,
-    //     tax: Decimal,
-    //     tax_percentage: Decimal,
-    //     discount: Decimal,
-    //     discount_percentage: Decimal,
-    //     total: Decimal,
-    //     contact_address: Addr,
-    // },
+    CreateInvoice{
+        address: Addr,
+        receivable: Coin,
+        amount_paid: Coin,
+        service_type:ServiceType,
+        doc_uri:String,
+    },
+
     SetConfig {
         nft_address: Addr,
         owner: Addr,
+        accepted_assets: Vec<Asset>,
     },
-}
+    AcceptInvoice {
+        invoice_id: u64,
+    },
+    PayInvoice{
+        invoice_id: u64,
+    },
+    }
+
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -65,5 +64,25 @@ pub enum QueryMsg {
     GetContactInfo {
         address: Addr,
     },
-
+    GetPendingInvoices {
+        address: Addr,
+    },
+    GetExecutedInvoices {
+        address: Addr,
+    },
+    GetTotalReceivables {
+        address: Addr,
+    },
+    GetTotalPayables {
+        address: Addr,
+    },
+    GetPendingContactRequests {
+        address: Addr,
+    },
+    GetSentContactRequests {
+        address: Addr,
+    },
+    GetAllContacts {
+        address: Addr,
+    },
 }
