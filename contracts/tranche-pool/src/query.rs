@@ -1,4 +1,5 @@
-use cosmwasm_std::{to_json_binary, Binary, Deps, Env, StdError, StdResult};
+use cosmwasm_std::{to_json_binary, Binary, Deps, Env, Order, StdError, StdResult};
+use cw_storage_plus::Bound;
 
 use crate::{
     msg::QueryMsg,
@@ -11,6 +12,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::GetConfig {} => to_json_binary(&get_config(deps, env)?),
         QueryMsg::GetPoolInfo { id } => to_json_binary(&get_pool_info(deps, env, id)?),
         QueryMsg::CheckKycStatus { user } => to_json_binary(&check_kyc_status(deps, env, user)?),
+        QueryMsg::GetAllPools {} => to_json_binary(&get_all_pools(deps, env)?),
     }
 }
 
@@ -20,6 +22,17 @@ pub fn get_config(deps: Deps, _env: Env) -> StdResult<Config> {
 
 pub fn get_pool_info(deps: Deps, _env: Env, id: u64) -> StdResult<TranchePool> {
     TRANCHE_POOLS.load(deps.storage, id)
+}
+
+pub fn get_all_pools(deps: Deps, _env: Env) -> StdResult<Vec<TranchePool>> {
+    let start = Some(Bound::inclusive(0u64));
+    let pools: StdResult<Vec<TranchePool>> = TRANCHE_POOLS
+        .range(deps.storage, start, None, Order::Ascending)
+        .take(10)
+        .map(|item| item.map(|(_, p)| p))
+        .collect();
+
+    Ok(pools?)
 }
 
 pub fn check_kyc_status(deps: Deps, _env: Env, user: String) -> StdResult<bool> {

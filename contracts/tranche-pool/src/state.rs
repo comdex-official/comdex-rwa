@@ -18,7 +18,9 @@ pub struct Config {
 #[cw_serde]
 pub struct TranchePool {
     pub pool_id: u64,
+    pub pool_name: String,
     pub borrower_addr: Addr,
+    pub borrower_name: String,
     pub creation_info: Timestamp,
     pub drawdown_info: Option<Timestamp>,
     pub drawdown_period: u64,
@@ -32,8 +34,9 @@ pub struct TranchePool {
 impl TranchePool {
     pub fn new(
         pool_id: u64,
-        borrow_limit: Uint128,
+        pool_name: String,
         borrower: Addr,
+        borrower_name: String,
         drawdown_period: u64,
         grace_period: u64,
         credit_line: CreditLine,
@@ -41,7 +44,9 @@ impl TranchePool {
     ) -> Self {
         TranchePool {
             pool_id,
+            pool_name,
             borrower_addr: borrower,
+            borrower_name,
             creation_info: env.block.time,
             drawdown_info: None,
             drawdown_period,

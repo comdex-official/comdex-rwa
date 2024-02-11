@@ -145,8 +145,9 @@ pub fn create_pool(
     let borrower = deps.api.addr_validate(&msg.borrower)?;
     let tranche_pool = TranchePool::new(
         config.pool_id,
-        msg.borrow_limit,
+        msg.pool_name,
         borrower.clone(),
+        msg.borrower_name,
         msg.drawdown_period,
         grace_period,
         credit_line,

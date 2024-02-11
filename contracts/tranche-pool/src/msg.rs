@@ -24,7 +24,9 @@ pub struct MigrateMsg {}
 
 #[cw_serde]
 pub struct CreatePoolMsg {
+    pub pool_name: String,
     pub borrower: String,
+    pub borrower_name: String,
     pub uid_token: Uint128,
     pub interest_apr: u16,
     pub borrow_limit: Uint128,
@@ -58,4 +60,5 @@ pub enum QueryMsg {
     GetConfig {},
     GetPoolInfo { id: u64 },
     CheckKycStatus { user: String },
+    GetAllPools {},
 }
