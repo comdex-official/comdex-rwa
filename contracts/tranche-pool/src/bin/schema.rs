@@ -1,4 +1,4 @@
-use pool::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use tranche_pool::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 
 use std::env::current_dir;
 use std::fs::create_dir_all;

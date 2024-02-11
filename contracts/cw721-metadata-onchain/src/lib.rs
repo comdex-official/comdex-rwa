@@ -101,7 +101,7 @@ mod tests {
 
     use cosmwasm_std::{
         testing::{mock_dependencies, mock_env, mock_info},
-        to_binary, Addr, CosmosMsg, WasmMsg,
+        to_json_binary, Addr, CosmosMsg, WasmMsg,
     };
     use cw721::Cw721Query;
     use cw_multi_test::{App, Contract, ContractWrapper, Executor};
@@ -199,7 +199,7 @@ mod tests {
             CosmosMsg::Wasm(WasmMsg::Migrate {
                 contract_addr: v0134_addr.to_string(),
                 new_code_id: cw721_base_code_id,
-                msg: to_binary(&MigrateMsg::<Empty> {
+                msg: to_json_binary(&MigrateMsg::<Empty> {
                     name: "Test".to_string(),
                     symbol: "TEST".to_string(),
                     collection_uri: Some("https://ipfs.io/hash".to_string()),
