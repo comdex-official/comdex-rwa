@@ -246,6 +246,7 @@ pub fn drawdown(
         return Err(ContractError::Unauthorized {});
     }
     pool.drawdown(msg.amount, &env)?;
+    TRANCHE_POOLS.save(deps.storage, msg.pool_id, &pool)?;
     // transfer amount to user
     let usdc_denom = USDC.load(deps.storage)?;
     let msg = CosmosMsg::Bank(BankMsg::Send {

@@ -243,6 +243,9 @@ impl CreditLine {
     }
 
     pub fn _interest_owed(&self, env: &Env) -> ContractResult<Uint128> {
+        if env.block.time < self.term_start {
+            return Ok(Uint128::zero());
+        }
         if env.block.time > self.term_end {
             return Ok(self.interest_accrued
                 + self.interest_over_period(self.last_update_ts, env.block.time)?);

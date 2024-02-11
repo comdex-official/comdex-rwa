@@ -70,9 +70,14 @@ impl TranchePool {
     }
 
     pub fn drawdown(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
-        let total_principal = (self.junior_tranche.principal_deposited
-            - self.junior_tranche.principal_redeemed)
-            + (self.senior_tranche.principal_deposited - self.senior_tranche.principal_redeemed);
+        let total_principal = self
+            .junior_tranche
+            .principal_deposited
+            .checked_sub(self.junior_tranche.principal_redeemed)?
+            + self
+                .senior_tranche
+                .principal_deposited
+                .checked_sub(self.senior_tranche.principal_redeemed)?;
         self.credit_line.drawdown(amount, total_principal, env)?;
         self.drawdown_info = Some(env.block.time);
         Ok(())
