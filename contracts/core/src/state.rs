@@ -1,9 +1,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use cosmwasm_std::{Addr, Coin,DepsMut,Deps,Response,StdError,StdResult};
-use cw_storage_plus::{Item, Map};
 use crate::error::ContractError;
+use cosmwasm_std::{Addr, Coin, Deps, DepsMut, Response, StdError, StdResult};
+use cw_storage_plus::{Item, Map};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -18,7 +18,7 @@ pub struct Asset {
 pub struct Config {
     pub nft_address: Addr,
     pub owner: Addr,
-    pub accepted_assets:Vec<Asset>
+    pub accepted_assets: Vec<Asset>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -28,6 +28,15 @@ pub struct Contact {
     pub contact_address: Addr,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct Metadata {
+    pub invoice_id: u64,
+    pub from: Addr,
+    pub receiver: Addr,
+    pub uri: String,
+    pub receivable: Coin,
+}
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct ContactInfo {
@@ -96,19 +105,22 @@ pub const CONFIG: Item<Config> = Item::new("config");
 
 pub const INVOICE_ID: Item<u64> = Item::new("invoice_id");
 
-
-
 pub fn get_invoice_id(deps: Deps) -> u64 {
     let mut id = INVOICE_ID.load(deps.storage).unwrap_or_default();
     id += 1;
     id
 }
 
-pub fn set_config(deps: DepsMut, nft_address: Addr, owner: Addr,accepted_assets:Vec<Asset>) -> Result<Response, ContractError>{
+pub fn set_config(
+    deps: DepsMut,
+    nft_address: Addr,
+    owner: Addr,
+    accepted_assets: Vec<Asset>,
+) -> Result<Response, ContractError> {
     let config = Config {
         nft_address: nft_address,
         owner: owner,
-        accepted_assets: accepted_assets
+        accepted_assets: accepted_assets,
     };
     CONFIG.save(deps.storage, &config).unwrap();
     Ok(Response::new())

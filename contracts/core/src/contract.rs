@@ -1,17 +1,17 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_binary, Addr, Api, Binary, Deps, DepsMut, Empty, Env, MessageInfo, Response,
-    StdResult,StdError
+    to_binary, Addr, Api, Binary, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdError,
+    StdResult,
 };
 
-use cw2::set_contract_version;
 use crate::error::ContractError;
-use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::*;
 use crate::invoice::*;
+use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use crate::profile;
 use crate::query::*;
+use crate::state::*;
+use cw2::set_contract_version;
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -42,28 +42,47 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response<Empty>, ContractError> {
     match msg {
-       ExecuteMsg::CreateRequest{address} => {
-           profile::create_request(deps,env,info,address)
-       },
-         ExecuteMsg::AcceptRequest{address} => {
-              profile::accept_request(deps,env,info,address)
-         },
-        ExecuteMsg::CreateProfile{name,email_id,phone_number,company_name,address} => {
-             profile::create_profile(deps,env,info,name,email_id,phone_number,company_name,address)
-        },
-        ExecuteMsg::SetConfig{nft_address,owner,accepted_assets} => {
-            set_config(deps,nft_address,owner,accepted_assets)
-        },
-        ExecuteMsg::CreateInvoice{address,receivable,amount_paid,service_type,doc_uri} => {
-            create_invoice(deps,env,info,address,receivable,amount_paid,service_type,doc_uri)
-        },
-        ExecuteMsg::AcceptInvoice{invoice_id} => {
-            accept_invoice(deps,env,info,invoice_id)
-        },
-        ExecuteMsg::PayInvoice{invoice_id} => {
-            pay_invoice(deps,env,info,invoice_id)
-        },
-
+        ExecuteMsg::CreateRequest { address } => profile::create_request(deps, env, info, address),
+        ExecuteMsg::AcceptRequest { address } => profile::accept_request(deps, env, info, address),
+        ExecuteMsg::CreateProfile {
+            name,
+            email_id,
+            phone_number,
+            company_name,
+            address,
+        } => profile::create_profile(
+            deps,
+            env,
+            info,
+            name,
+            email_id,
+            phone_number,
+            company_name,
+            address,
+        ),
+        ExecuteMsg::SetConfig {
+            nft_address,
+            owner,
+            accepted_assets,
+        } => set_config(deps, nft_address, owner, accepted_assets),
+        ExecuteMsg::CreateInvoice {
+            address,
+            receivable,
+            amount_paid,
+            service_type,
+            doc_uri,
+        } => create_invoice(
+            deps,
+            env,
+            info,
+            address,
+            receivable,
+            amount_paid,
+            service_type,
+            doc_uri,
+        ),
+        ExecuteMsg::AcceptInvoice { invoice_id } => accept_invoice(deps, env, info, invoice_id),
+        ExecuteMsg::PayInvoice { invoice_id } => pay_invoice(deps, env, info, invoice_id),
     }
 }
 
@@ -74,16 +93,25 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::GetConfig {} => to_binary(&get_config(deps)?),
         QueryMsg::GetLatestInvoiceId {} => to_binary(&get_latest_invoice_id(deps)?),
         QueryMsg::GetContactInfo { address } => to_binary(&get_contact_info(deps, address)?),
-        QueryMsg::GetPendingInvoices { address } => to_binary(&get_pending_invoices(deps, address)?),
-        QueryMsg::GetExecutedInvoices { address } => to_binary(&get_executed_invoices(deps, address)?),
-        QueryMsg::GetTotalReceivables { address } => to_binary(&get_total_receivables(deps, address)?),
-        QueryMsg::GetTotalPayables { address } => to_binary(&get_total_payables(deps, address)?),
-        QueryMsg::GetPendingContactRequests { address } => to_binary(&get_pending_contact_requests(deps, address)?),
-        QueryMsg::GetSentContactRequests { address } => to_binary(&get_sent_contact_requests(deps, address)?),
-        QueryMsg::GetAllContacts { address } => to_binary(&get_all_contacts(deps, address)?),
+        QueryMsg::GetPendingInvoices { address } => {
+            to_binary(&get_pending_invoices(deps, address)?)
         }
+        QueryMsg::GetExecutedInvoices { address } => {
+            to_binary(&get_executed_invoices(deps, address)?)
+        }
+        QueryMsg::GetTotalReceivables { address } => {
+            to_binary(&get_total_receivables(deps, address)?)
+        }
+        QueryMsg::GetTotalPayables { address } => to_binary(&get_total_payables(deps, address)?),
+        QueryMsg::GetPendingContactRequests { address } => {
+            to_binary(&get_pending_contact_requests(deps, address)?)
+        }
+        QueryMsg::GetSentContactRequests { address } => {
+            to_binary(&get_sent_contact_requests(deps, address)?)
+        }
+        QueryMsg::GetAllContacts { address } => to_binary(&get_all_contacts(deps, address)?),
     }
-
+}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
@@ -99,7 +127,6 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, C
     // set the new version
     cw2::set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     //do any desired state migrations...
-
 
     Ok(Response::default())
 }
