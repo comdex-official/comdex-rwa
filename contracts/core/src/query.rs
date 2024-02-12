@@ -1,15 +1,8 @@
-use crate::error::ContractError;
-use crate::invoice::*;
-use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::profile::*;
 use crate::state::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use cosmwasm_std::{
-    to_binary, Addr, Api, Binary, Coin, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
-    Response, StdResult,
-};
+use cosmwasm_std::{to_binary, Addr, Coin, Deps, StdResult};
 
 pub fn get_invoice(deps: Deps, invoice_id: u64) -> StdResult<Invoice> {
     let invoice = INVOICE.load(deps.storage, &invoice_id)?;
@@ -31,41 +24,82 @@ pub fn get_contact_info(deps: Deps, address: Addr) -> StdResult<ContactInfo> {
     Ok(contact_info)
 }
 
-pub fn get_pending_invoices(deps: Deps, address: Addr) -> StdResult<(Vec<Invoice>, Vec<Invoice>)> {
-    let contact_info = CONTACT_INFO.may_load(deps.storage, &address)?;
-    if contact_info.is_none() {
-        return Ok((vec![], vec![]));
-    }
-    let contact_info = contact_info.unwrap();
-    let mut sent_invoices = vec![];
-    let mut received_invoices = vec![];
-    for invoice_id in contact_info.generated_invoices.iter() {
-        let invoice = INVOICE.may_load(deps.storage, &invoice_id)?;
-        if invoice.is_none() {
-            continue;
-        }
-        let invoice = invoice.unwrap();
-        if invoice.status != Status::Paid {
-            sent_invoices.push(invoice);
-        }
-    }
-    for invoice_id in contact_info.assigned_invoices.iter() {
-        let invoice = INVOICE.may_load(deps.storage, &invoice_id)?;
-        if invoice.is_none() {
-            continue;
-        }
-        let invoice = invoice.unwrap();
-        if invoice.status != Status::Paid {
-            received_invoices.push(invoice);
-        }
-    }
-    Ok((sent_invoices, received_invoices))
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct RequestResponse {
+    pub sent_invoices: Vec<InvoiceResponse>,
+    pub received_invoices: Vec<InvoiceResponse>,
 }
 
-pub fn get_executed_invoices(deps: Deps, address: Addr) -> StdResult<(Vec<Invoice>, Vec<Invoice>)> {
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct InvoiceResponse {
+    pub invoice: Invoice,
+    pub contact: ContactResponse,
+}
+
+
+pub fn get_pending_invoices(deps: Deps, address: Addr) -> StdResult<RequestResponse> {
     let contact_info = CONTACT_INFO.may_load(deps.storage, &address)?;
     if contact_info.is_none() {
-        return Ok((vec![], vec![]));
+        return Ok(RequestResponse {
+            sent_invoices: vec![],
+            received_invoices: vec![],
+        });
+    }
+    let contact_info = contact_info.unwrap();
+    let mut sent_invoices = vec![];
+    let mut received_invoices = vec![];
+    for invoice_id in contact_info.generated_invoices.iter() {
+        let invoice = INVOICE.may_load(deps.storage, &invoice_id)?;
+        if invoice.is_none() {
+            continue;
+        }
+        let invoice = invoice.unwrap();
+        if invoice.status != Status::Paid {
+            let contact_info = CONTACT_INFO.load(deps.storage, &invoice.receiver)?;
+            sent_invoices.push(InvoiceResponse {
+                invoice: invoice,
+                contact: ContactResponse {
+                    name: contact_info.name,
+                    address: contact_info.owner,
+                    company_name: contact_info.company_name,
+                },
+            });
+        }
+    }
+    for invoice_id in contact_info.assigned_invoices.iter() {
+        let invoice = INVOICE.may_load(deps.storage, &invoice_id)?;
+        if invoice.is_none() {
+            continue;
+        }
+        let invoice = invoice.unwrap();
+        if invoice.status != Status::Paid {
+            let contact_info = CONTACT_INFO.load(deps.storage, &invoice.from)?;
+            received_invoices.push(InvoiceResponse {
+                invoice: invoice,
+                contact: ContactResponse {
+                    name: contact_info.name,
+                    address: contact_info.owner,
+                    company_name: contact_info.company_name,
+                },
+            });
+        }
+    }
+    Ok(RequestResponse {
+        sent_invoices,
+        received_invoices,
+    })
+}
+
+pub fn get_executed_invoices(deps: Deps, address: Addr) -> StdResult<RequestResponse> {
+    let contact_info = CONTACT_INFO.may_load(deps.storage, &address)?;
+    if contact_info.is_none() {
+        return Ok(RequestResponse {
+            sent_invoices: vec![],
+            received_invoices: vec![],
+        });
     }
     let contact_info = contact_info.unwrap();
     let mut sent_invoices = vec![];
@@ -77,7 +111,15 @@ pub fn get_executed_invoices(deps: Deps, address: Addr) -> StdResult<(Vec<Invoic
         }
         let invoice = invoice.unwrap();
         if invoice.status == Status::Paid {
-            sent_invoices.push(invoice);
+            let contact_info = CONTACT_INFO.load(deps.storage, &invoice.receiver)?;
+            sent_invoices.push(InvoiceResponse {
+                invoice: invoice,
+                contact: ContactResponse {
+                    name: contact_info.name,
+                    address: contact_info.owner,
+                    company_name: contact_info.company_name,
+                },
+            });
         }
     }
     for invoice_id in contact_info.assigned_invoices.iter() {
@@ -87,11 +129,23 @@ pub fn get_executed_invoices(deps: Deps, address: Addr) -> StdResult<(Vec<Invoic
         }
         let invoice = invoice.unwrap();
         if invoice.status == Status::Paid {
-            received_invoices.push(invoice);
+            let contact_info = CONTACT_INFO.load(deps.storage, &invoice.from)?;
+            received_invoices.push(InvoiceResponse {
+                invoice: invoice,
+                contact: ContactResponse {
+                    name: contact_info.name,
+                    address: contact_info.owner,
+                    company_name: contact_info.company_name,
+                },
+            });
         }
     }
-    Ok((sent_invoices, received_invoices))
+    Ok(RequestResponse {
+        sent_invoices,
+        received_invoices,
+    })
 }
+
 
 pub fn get_total_receivables(deps: Deps, address: Addr) -> StdResult<Vec<Coin>> {
     let contact_info = CONTACT_INFO.may_load(deps.storage, &address)?;

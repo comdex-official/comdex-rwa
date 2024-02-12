@@ -1,9 +1,5 @@
-use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use crate::state::*;
-use cosmwasm_std::{
-    entry_point, to_binary, Addr, Api, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
-    Response, StdError, StdResult,
-};
+use cosmwasm_std::{to_binary, Addr, DepsMut, Env, MessageInfo, Response, StdError};
 
 use crate::error::ContractError;
 
@@ -19,25 +15,19 @@ pub fn create_request(
     }
 
     //// check if already requested ////
-    let contact_info = CONTACT_INFO.may_load(deps.storage, &info.sender)?;
-    if contact_info.is_none() {
-        return Err(StdError::generic_err("Profile does not exist").into());
-    }
 
-    let mut contact_info = contact_info.unwrap();
+    let mut contact_info = CONTACT_INFO
+        .may_load(deps.storage, &info.sender)?
+        .ok_or_else(|| StdError::generic_err("Profile does not exist"))?;
 
-    //// iterate over sent request to check if address exist in contacr_info.sent_requests ////
-    for contact in contact_info.sent_requests.iter() {
-        if contact == address {
-            return Err(StdError::generic_err("Already Requested").into());
-        }
+    //// iterate over sent request to check if address exist in contact_info.sent_requests ////
+    if contact_info.sent_requests.contains(&address) {
+        return Err(StdError::generic_err("Already sent request").into());
     }
 
     //// check if already in my contact list or already existing alias ////
-    for contact in contact_info.contacts.iter() {
-        if contact == address {
-            return Err(StdError::generic_err("Already in contact list").into());
-        }
+    if contact_info.sent_requests.contains(&address) {
+        return Err(StdError::generic_err("Already in contact").into());
     }
 
     //// append new contact to sent_requests ////
@@ -48,14 +38,17 @@ pub fn create_request(
 
     //// create request message ////
 
-    let requested_contact_info = CONTACT_INFO.may_load(deps.storage, &address)?;
-    if requested_contact_info.is_none() {
-        return Err(StdError::generic_err("Recipient Profile does not exist").into());
-    }
-    let mut requested_contact_info = requested_contact_info.unwrap();
+    //// Loads the requested contact information for the given address from storage.
+    //// Returns an error if the contact information cannot be loaded.
+
+    let mut requested_contact_info = CONTACT_INFO
+        .may_load(deps.storage, &address)?
+        .ok_or_else(|| StdError::generic_err("Recipient Profile does not exist"))?; // Assuming ContactInfo::new() is defined.
+
     requested_contact_info
         .received_requests
         .push(info.sender.clone());
+
     CONTACT_INFO.save(deps.storage, &address, &requested_contact_info)?;
 
     Ok(Response::new()
@@ -76,13 +69,9 @@ pub fn accept_request(
     }
 
     //// check if request exist ////
-
-    let contact_info = CONTACT_INFO.may_load(deps.storage, &info.sender)?;
-
-    if contact_info.is_none() {
-        return Err(StdError::generic_err("No profile found ").into());
-    }
-    let mut contact_info = contact_info.unwrap();
+    let mut contact_info = CONTACT_INFO
+        .may_load(deps.storage, &info.sender)?
+        .ok_or_else(|| StdError::generic_err("Profile does not exist"))?;
 
     //// check if request exist ////
     let mut request_exist = false;
@@ -108,12 +97,12 @@ pub fn accept_request(
     CONTACT_INFO.save(deps.storage, &info.sender, &contact_info)?;
 
     //// remove send request of the sender ////
-    let requested_contact_info = CONTACT_INFO.may_load(deps.storage, &address)?;
-    if requested_contact_info.is_none() {
-        return Err(StdError::generic_err("Requestor profile not found").into());
-    }
 
-    let mut requested_contact_info = requested_contact_info.unwrap();
+    let mut requested_contact_info = CONTACT_INFO
+        .may_load(deps.storage, &address)?
+        .ok_or_else(|| StdError::generic_err("Requestor Profile does not exist"))?; // Assuming ContactInfo::new() is defined.
+
+
 
     let mut index = 0;
     for contact in requested_contact_info.sent_requests.iter() {
@@ -131,8 +120,9 @@ pub fn accept_request(
     //// save updated contact_info ////
     CONTACT_INFO.save(deps.storage, &address, &requested_contact_info)?;
 
-    Ok(Response::new() .add_attribute("method", "accept_request")
-    .add_attribute("receiver", info.sender))
+    Ok(Response::new()
+        .add_attribute("method", "accept_request")
+        .add_attribute("receiver", info.sender))
 }
 
 pub fn create_profile(
@@ -145,7 +135,6 @@ pub fn create_profile(
     company_name: String,
     address: String,
 ) -> Result<Response, ContractError> {
-
     //// do not accept funds ////
     if !info.funds.is_empty() {
         return Err(StdError::generic_err("Funds not accepted").into());
@@ -175,6 +164,7 @@ pub fn create_profile(
 
     CONTACT_INFO.save(deps.storage, &info.sender, &new_contact_info)?;
 
-    Ok(Response::new().add_attribute("method", "create_profile")
-    .add_attribute("sender", info.sender))
+    Ok(Response::new()
+        .add_attribute("method", "create_profile")
+        .add_attribute("sender", info.sender))
 }

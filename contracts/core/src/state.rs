@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ContractError;
-use cosmwasm_std::{Addr, Coin, Deps, DepsMut, Response, StdError, StdResult};
+use cosmwasm_std::{Addr, Coin, Deps, DepsMut, Response};
 use cw_storage_plus::{Item, Map};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -90,9 +90,9 @@ pub struct Invoice {
     pub id: u64,
     pub from: Addr,
     pub receiver: Addr,
-    pub nft_id: u8,
+    pub nft_id: u64,
     pub doc_uri: String,
-    pub amount: Coin,
+    pub due_amount: Coin,
     pub receivable: Coin,
     pub amount_paid: Coin,
     pub service_type: ServiceType,
@@ -117,6 +117,7 @@ pub fn set_config(
     owner: Addr,
     accepted_assets: Vec<Asset>,
 ) -> Result<Response, ContractError> {
+    
     let config = Config {
         nft_address: nft_address,
         owner: owner,

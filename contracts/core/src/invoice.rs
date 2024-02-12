@@ -2,7 +2,7 @@ use crate::msg::{InstantiateMsg, QueryMsg};
 use crate::state::*;
 use cosmwasm_std::{
     entry_point, to_binary, Addr, Api, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Empty, Env,
-    MessageInfo, Response, StdError, StdResult, SubMsg, Uint128, WasmMsg,
+    MessageInfo, Response, StdError, Uint128, WasmMsg,
 };
 use cw721_base::msg::{ExecuteMsg, MintMsg};
 
@@ -38,61 +38,47 @@ pub fn create_invoice(
     //// iterate config accepted asset to check if receivable denom is accepted ////
 
     let config = CONFIG.load(deps.storage)?;
-    let accepted_assets = config.accepted_assets;
-    let mut found = false;
-    for asset in accepted_assets.iter() {
-        if asset.denom == receivable.denom {
-            found = true;
-            break;
-        }
-    }
-    if !found {
+ 
+    if !config.accepted_assets.iter().any(|asset| asset.denom == receivable.denom) {
         return Err(StdError::generic_err("Asset not accepted").into());
     }
 
-    //// check if already requested ////
-    let contact_info = CONTACT_INFO.may_load(deps.storage, &info.sender)?;
-    if contact_info.is_none() {
-        return Err(StdError::generic_err("Profile does not exist").into());
-    }
-    let contact_info = contact_info.unwrap();
+        // Load and validate sender's contact info
+        let mut sender_contact_info = CONTACT_INFO.may_load(deps.storage, &info.sender)?
+        .ok_or_else(|| StdError::generic_err("Profile does not exist"))?;
 
-    if contact_info.kyc_status != KYCStatus::Approved {
+ 
+    if sender_contact_info.kyc_status != KYCStatus::Approved {
         return Err(StdError::generic_err("Creator KYC not verified").into());
     }
 
     //// if address doesnt exists in contact _info.contact throw error
-
-    let contacts = contact_info.contacts.clone();
-    let mut found = false;
-    for contact in contacts.iter() {
-        if contact == receiver {
-            found = true;
-            break;
-        }
+    let contacts = sender_contact_info.contacts.clone();
+    if !contacts.contains(&receiver) {
+        return Err(StdError::generic_err("Receiver not in contact list").into());
     }
-    if !found {
-        return Err(StdError::generic_err("CounterParty Does not exist in your contact").into());
-    }
-
+    
     //// Check if counter party is verified or not
-    let contact_info = CONTACT_INFO.may_load(deps.storage, &receiver)?;
-    if contact_info.is_none() {
-        return Err(StdError::generic_err("CounterParty Profile does not exist").into());
-    }
-    let contact_info = contact_info.unwrap();
-    if contact_info.kyc_status == KYCStatus::Unverified {
+    let mut receiver_contact_info = CONTACT_INFO.may_load(deps.storage, &receiver)?
+    .ok_or_else(|| StdError::generic_err("CounterParty Profile does not exist"))?;
+
+    if receiver_contact_info.kyc_status == KYCStatus::Unverified {
         return Err(StdError::generic_err("CounterParty KYC not verified").into());
     }
+
+    let due_amount=Coin {
+        denom: receivable.denom.clone(),
+        amount: receivable.amount - amount_paid.amount,
+    };
 
     let invoice_id = get_invoice_id(deps.as_ref());
     let invoice = Invoice {
         id: invoice_id,
         from: info.sender.clone(),
         receiver: receiver.clone(),
-        nft_id: invoice_id as u8,
+        nft_id: invoice_id ,
         doc_uri: doc_uri.clone(),
-        amount: amount_paid.clone(),
+        due_amount: due_amount,
         receivable: receivable.clone(),
         amount_paid: Coin {
             denom: receivable.denom.clone(),
@@ -104,14 +90,12 @@ pub fn create_invoice(
 
     INVOICE.save(deps.storage, &invoice_id, &invoice)?;
 
-    let mut contact_info = CONTACT_INFO.load(deps.storage, &info.sender)?;
-    contact_info.generated_invoices.push(invoice_id);
-    CONTACT_INFO.save(deps.storage, &info.sender, &contact_info)?;
+    sender_contact_info.generated_invoices.push(invoice_id);
+    CONTACT_INFO.save(deps.storage, &info.sender, &sender_contact_info)?;
 
     ///// updated assigned invoice list
-    let mut contact_info = CONTACT_INFO.load(deps.storage, &receiver)?;
-    contact_info.assigned_invoices.push(invoice_id);
-    CONTACT_INFO.save(deps.storage, &receiver, &contact_info)?;
+    receiver_contact_info.assigned_invoices.push(invoice_id);
+    CONTACT_INFO.save(deps.storage, &receiver, &receiver_contact_info)?;
 
     let metadata = Metadata {
         invoice_id: invoice_id,
@@ -149,23 +133,17 @@ pub fn pay_invoice(
     info: MessageInfo,
     invoice_id: u64,
 ) -> Result<Response, ContractError> {
-    let funds = info.funds.clone();
-    if funds.len() != 1 {
-        return Err(StdError::generic_err("Accepts only one token").into());
-    }
+    // Validate that exactly one type of token is sent
+    let funds = match info.funds.as_slice() {
+        [fund] => fund,
+        _ => return Err(StdError::generic_err("Accepts only one token").into()),
+    };
+
 
     //// iterate config accepted asset to check if receivable denom is accepted ////
 
     let config = CONFIG.load(deps.storage)?;
-    let accepted_assets = config.accepted_assets;
-    let mut found = false;
-    for asset in accepted_assets.iter() {
-        if asset.denom == funds[0].denom {
-            found = true;
-            break;
-        }
-    }
-    if !found {
+    if !config.accepted_assets.iter().any(|asset| asset.denom == funds.denom) {
         return Err(StdError::generic_err("Token not accepted").into());
     }
 
@@ -175,12 +153,11 @@ pub fn pay_invoice(
         return Err(StdError::generic_err("Receiver and Sender cannot be same").into());
     }
 
-    if invoice.status == Status::Raised {
-        return Err(StdError::generic_err("Invoice not yet accepted").into());
-    }
-
-    if invoice.status == Status::Paid {
-        return Err(StdError::generic_err("Invoice already paid").into());
+    // Check the invoice status
+    match invoice.status {
+        Status::Raised => return Err(StdError::generic_err("Invoice not yet accepted").into()),
+        Status::Paid => return Err(StdError::generic_err("Invoice already paid").into()),
+        _ => (),
     }
 
     let amount = info.funds[0].amount;
@@ -198,6 +175,7 @@ pub fn pay_invoice(
     if amount_paid + amount == receivable {
         invoice.amount_paid.amount = invoice.amount_paid.amount + info.funds[0].amount.clone();
         invoice.status = Status::Paid;
+        invoice.due_amount.amount = Uint128::zero();
         INVOICE.save(deps.storage, &invoice_id, &invoice)?;
 
         //// transfer nft to owner ////
@@ -212,9 +190,11 @@ pub fn pay_invoice(
             funds: vec![],
         });
 
+
         response = response.add_message(message);
     } else {
         invoice.amount_paid.amount = invoice.amount_paid.amount + info.funds[0].amount.clone();
+        invoice.due_amount.amount = receivable - (amount_paid + amount);
         invoice.status = Status::PartiallyPaid;
         INVOICE.save(deps.storage, &invoice_id, &invoice)?;
     }
@@ -229,7 +209,8 @@ pub fn pay_invoice(
 
     response = response.add_message(bank_msg);
 
-    Ok(response.add_attribute("method", "pay_invoice")
+    Ok(response
+        .add_attribute("method", "pay_invoice")
         .add_attribute("amount", amount.to_string())
         .add_attribute("denom", denom))
 }
@@ -253,6 +234,7 @@ pub fn accept_invoice(
     invoice.status = Status::Accepted;
     INVOICE.save(deps.storage, &invoice_id, &invoice)?;
 
-    Ok(Response::new().add_attribute("method", "accept_invoice")
+    Ok(Response::new()
+        .add_attribute("method", "accept_invoice")
         .add_attribute("invoice_id", invoice_id.to_string()))
 }
