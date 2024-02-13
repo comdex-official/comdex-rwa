@@ -1,7 +1,7 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_binary, Addr, Api, Binary, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdError,
+    to_json_binary, Addr, Api, Binary, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdError,
     StdResult,
 };
 
@@ -89,27 +89,27 @@ pub fn execute(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::GetInvoice { invoice_id } => to_binary(&get_invoice(deps, invoice_id)?),
-        QueryMsg::GetConfig {} => to_binary(&get_config(deps)?),
-        QueryMsg::GetLatestInvoiceId {} => to_binary(&get_latest_invoice_id(deps)?),
-        QueryMsg::GetContactInfo { address } => to_binary(&get_contact_info(deps, address)?),
+        QueryMsg::GetInvoice { invoice_id } => to_json_binary(&get_invoice(deps, invoice_id)?),
+        QueryMsg::GetConfig {} => to_json_binary(&get_config(deps)?),
+        QueryMsg::GetLatestInvoiceId {} => to_json_binary(&get_latest_invoice_id(deps)?),
+        QueryMsg::GetContactInfo { address } => to_json_binary(&get_contact_info(deps, address)?),
         QueryMsg::GetPendingInvoices { address } => {
-            to_binary(&get_pending_invoices(deps, address)?)
+            to_json_binary(&get_pending_invoices(deps, address)?)
         }
         QueryMsg::GetExecutedInvoices { address } => {
-            to_binary(&get_executed_invoices(deps, address)?)
+            to_json_binary(&get_executed_invoices(deps, address)?)
         }
         QueryMsg::GetTotalReceivables { address } => {
-            to_binary(&get_total_receivables(deps, address)?)
+            to_json_binary(&get_total_receivables(deps, address)?)
         }
-        QueryMsg::GetTotalPayables { address } => to_binary(&get_total_payables(deps, address)?),
+        QueryMsg::GetTotalPayables { address } => to_json_binary(&get_total_payables(deps, address)?),
         QueryMsg::GetPendingContactRequests { address } => {
-            to_binary(&get_pending_contact_requests(deps, address)?)
+            to_json_binary(&get_pending_contact_requests(deps, address)?)
         }
         QueryMsg::GetSentContactRequests { address } => {
-            to_binary(&get_sent_contact_requests(deps, address)?)
+            to_json_binary(&get_sent_contact_requests(deps, address)?)
         }
-        QueryMsg::GetAllContacts { address } => to_binary(&get_all_contacts(deps, address)?),
+        QueryMsg::GetAllContacts { address } => to_json_binary(&get_all_contacts(deps, address)?),
     }
 }
 

@@ -2,7 +2,7 @@ use crate::state::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use cosmwasm_std::{to_binary, Addr, Coin, Deps, StdResult};
+use cosmwasm_std::{Addr, Coin, Deps, StdResult};
 
 pub fn get_invoice(deps: Deps, invoice_id: u64) -> StdResult<Invoice> {
     let invoice = INVOICE.load(deps.storage, &invoice_id)?;

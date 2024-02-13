@@ -1,7 +1,7 @@
 use crate::msg::{InstantiateMsg, QueryMsg};
 use crate::state::*;
 use cosmwasm_std::{
-    entry_point, to_binary, Addr, Api, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Empty, Env,
+    entry_point, to_json_binary, Addr, Api, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Empty, Env,
     MessageInfo, Response, StdError, Uint128, WasmMsg,
 };
 use cw721_base::msg::{ExecuteMsg, MintMsg};
@@ -116,7 +116,7 @@ pub fn create_invoice(
 
     let message: CosmosMsg<_> = CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr: config.nft_address.into_string(),
-        msg: to_binary(&msg)?,
+        msg: to_json_binary(&msg)?,
         funds: vec![],
     });
 
@@ -186,7 +186,7 @@ pub fn pay_invoice(
 
         let message: CosmosMsg<Empty> = CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: config.nft_address.into_string(),
-            msg: to_binary(&msg)?,
+            msg: to_json_binary(&msg)?,
             funds: vec![],
         });
 

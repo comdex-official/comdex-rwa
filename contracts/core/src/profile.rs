@@ -1,5 +1,5 @@
 use crate::state::*;
-use cosmwasm_std::{to_binary, Addr, DepsMut, Env, MessageInfo, Response, StdError};
+use cosmwasm_std::{Addr, DepsMut, Env, MessageInfo, Response, StdError};
 
 use crate::error::ContractError;
 
