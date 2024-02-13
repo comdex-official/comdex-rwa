@@ -18,11 +18,11 @@ For more information on this contract, please check out the
 [README](https://github.com/CosmWasm/cw-plus/blob/main/contracts/cw1-whitelist/README.md).
 */
 
-pub mod profile;
 pub mod contract;
 pub mod error;
-pub mod msg;
-pub mod state;
 pub mod invoice;
-
+pub mod msg;
+pub mod profile;
+pub mod query;
+pub mod state;
 pub use crate::error::ContractError;

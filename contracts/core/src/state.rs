@@ -1,14 +1,24 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use cosmwasm_std::{Addr, Coin,DepsMut,Deps};
+use crate::error::ContractError;
+use cosmwasm_std::{Addr, Coin, Deps, DepsMut, Response};
 use cw_storage_plus::{Item, Map};
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct Asset {
+    pub name: String,
+    pub denom: String,
+    pub decimal: u64,
+    pub uri: Option<String>,
+}
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct Config {
     pub nft_address: Addr,
     pub owner: Addr,
+    pub accepted_assets: Vec<Asset>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -20,17 +30,25 @@ pub struct Contact {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub struct Metadata {
+    pub invoice_id: u64,
+    pub from: Addr,
+    pub receiver: Addr,
+    pub uri: String,
+    pub receivable: Coin,
+}
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub struct ContactInfo {
-    pub account_address: Addr,
     pub name: String,
+    pub company_name: String,
     pub address: String,
-    pub jurisdiction: String,
+    pub phone_number: String,
     pub owner: Addr,
     pub email_id: String,
-    pub sent_requests: Vec<Contact>,
-    pub received_requests: Vec<Contact>,
-    pub contacts: Vec<Contact>,
-    pub kyc_type: String,
+    pub sent_requests: Vec<Addr>,
+    pub received_requests: Vec<Addr>,
+    pub contacts: Vec<Addr>,
     pub kyc_status: KYCStatus,
     pub assigned_invoices: Vec<u64>,
     pub generated_invoices: Vec<u64>,
@@ -50,19 +68,17 @@ pub enum ServiceType {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
-    Unspecified,
     Raised,
     Accepted,
     Paid,
     PartiallyPaid,
-    ReVerify,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum KYCStatus {
     Unverified,
-    InProgess,
+    InProcess,
     Rejected,
     Approved,
     ReVerify,
@@ -71,12 +87,12 @@ pub enum KYCStatus {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct Invoice {
-    pub id: u8,
+    pub id: u64,
     pub from: Addr,
     pub receiver: Addr,
-    pub counter_party_id: u8,
-    pub nft_id: u8,
-    pub amount: Coin,
+    pub nft_id: u64,
+    pub doc_uri: String,
+    pub due_amount: Coin,
     pub receivable: Coin,
     pub amount_paid: Coin,
     pub service_type: ServiceType,
@@ -89,11 +105,28 @@ pub const CONFIG: Item<Config> = Item::new("config");
 
 pub const INVOICE_ID: Item<u64> = Item::new("invoice_id");
 
-
-
 pub fn get_invoice_id(deps: Deps) -> u64 {
     let mut id = INVOICE_ID.load(deps.storage).unwrap_or_default();
     id += 1;
     id
 }
 
+pub fn set_config(
+    deps: DepsMut,
+    nft_address: Addr,
+    owner: Addr,
+    accepted_assets: Vec<Asset>,
+) -> Result<Response, ContractError> {
+    
+    let config = Config {
+        nft_address: nft_address,
+        owner: owner,
+        accepted_assets: accepted_assets,
+    };
+    CONFIG.save(deps.storage, &config).unwrap();
+    Ok(Response::new())
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct MigrateMsg {}
