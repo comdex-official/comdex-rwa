@@ -1,15 +1,12 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{
-    to_binary, Addr, Api, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Response,
-    StdResult,
-};
+use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 
-use cw2::set_contract_version;
 use crate::error::ContractError;
-use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::msg::{ExecuteMsg, InstantiateMsg};
 use crate::state::ADMIN;
 use crate::ContractResult;
+use cw2::set_contract_version;
 
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -37,13 +34,11 @@ pub fn instantiate(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
-    deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
-    // Note: implement this function with different type to add support for custom messages
-    // and then import the rest of this contract code.
+    _deps: DepsMut,
+    _env: Env,
+    _info: MessageInfo,
     msg: ExecuteMsg,
-) -> Result<Response<Empty>, ContractError> {
+) -> Result<Response, ContractError> {
     match msg {
         _ => unimplemented!(),
     }

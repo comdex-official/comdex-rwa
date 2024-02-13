@@ -1,7 +1,7 @@
-use crate::msg::{InstantiateMsg, QueryMsg};
+
 use crate::state::*;
 use cosmwasm_std::{
-    entry_point, to_json_binary, Addr, Api, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Empty, Env,
+    to_json_binary, Addr, BankMsg, Coin, CosmosMsg, DepsMut, Empty, Env,
     MessageInfo, Response, StdError, Uint128, WasmMsg,
 };
 use cw721_base::msg::{ExecuteMsg, MintMsg};

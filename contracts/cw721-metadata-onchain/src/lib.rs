@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, dead_code)]
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Empty, Uint128};
 use cw2::set_contract_version;

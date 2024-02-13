@@ -2,15 +2,14 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     coins, to_json_binary, Addr, BankMsg, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
-    Querier, Response, StdError, Uint128, WasmMsg, WasmQuery,
+    Response, StdError, WasmMsg, WasmQuery,
 };
 
 use crate::credit_line::CreditLine;
 use crate::error::{ContractError, ContractResult};
 use crate::helpers::get_grace_period;
 use crate::msg::{
-    CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, GetContactInfo, InstantiateMsg, MigrateMsg,
-    RepayMsg,
+    CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, RepayMsg,
 };
 use crate::state::{
     Config, InvestorToken, TranchePool, CONFIG, KYC, KYC_CONTRACT, TRANCHE_POOLS, USDC,
@@ -335,15 +334,15 @@ fn ensure_empty_funds(info: &MessageInfo) -> ContractResult<()> {
 }
 
 pub fn has_kyc(deps: Deps, user: Addr) -> ContractResult<bool> {
-    let kyc_contract = KYC_CONTRACT.load(deps.storage)?;
-    let msg = to_json_binary(&GetContactInfo {
-        address: user.to_string(),
-    })?;
-    let wasm_msg = WasmQuery::Smart {
-        contract_addr: kyc_contract.to_string(),
-        msg,
-    };
-    let result = deps.querier.query(&wasm_msg.into());
+    //let kyc_contract = KYC_CONTRACT.load(deps.storage)?;
+    //let msg = to_json_binary(&GetContactInfo {
+        //address: user.to_string(),
+    //})?;
+    //let wasm_msg = WasmQuery::Smart {
+        //contract_addr: kyc_contract.to_string(),
+        //msg,
+    //};
+    //let result = deps.querier.query(&wasm_msg.into());
     Ok(KYC.may_load(deps.storage, user)?.unwrap_or(false))
 }
 
