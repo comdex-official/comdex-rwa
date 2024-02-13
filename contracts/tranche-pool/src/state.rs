@@ -28,6 +28,7 @@ pub struct TranchePool {
     pub junior_tranche: LendInfo,
     pub senior_tranche: LendInfo,
     pub credit_line: CreditLine,
+    //pub denom: String,
     pub backers: Vec<u128>,
 }
 
@@ -184,6 +185,15 @@ impl PaymentFrequency {
     }
 }
 
+#[cw_serde]
+pub struct AllPoolsResponse {
+    pub pool_id: u64,
+    pub pool_name: String,
+    pub borrower_name: String,
+    pub interest_apr: u16,
+    pub tvl: Uint128,
+}
+
 /// Access Control Info
 #[cw_serde]
 pub struct ACI {
@@ -193,6 +203,7 @@ pub struct ACI {
     pub pool_auth: u64,
 }
 
+pub const KYC_CONTRACT: Item<Addr> = Item::new("kyc_contract");
 pub const CONFIG: Item<Config> = Item::new("pool_config");
 pub const TRANCHE_POOLS: Map<u64, TranchePool> = Map::new("tranche_pools");
 pub const BORROWERS: Map<Addr, ACI> = Map::new("borrowers");

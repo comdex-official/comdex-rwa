@@ -1,7 +1,6 @@
 // TODO
 // * Deposit
 //   - return lp_token
-// * Invest
 
 
 pub mod contract;

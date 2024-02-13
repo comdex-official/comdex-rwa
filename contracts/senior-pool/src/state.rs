@@ -7,7 +7,7 @@ use crate::ContractResult;
 
 #[cw_serde]
 pub struct Config {
-    pub lp_token: Addr,
+    pub lp_token: String,
 }
 
 #[cw_serde]

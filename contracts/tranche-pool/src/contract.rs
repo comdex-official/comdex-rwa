@@ -2,17 +2,19 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     coins, to_json_binary, Addr, BankMsg, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
-    Response, StdError, Uint128, WasmMsg,
+    Querier, Response, StdError, Uint128, WasmMsg, WasmQuery,
 };
 
 use crate::credit_line::CreditLine;
 use crate::error::{ContractError, ContractResult};
 use crate::helpers::get_grace_period;
 use crate::msg::{
-    CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, RepayMsg,
+    CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, GetContactInfo, InstantiateMsg, MigrateMsg,
+    RepayMsg,
 };
 use crate::state::{
-    Config, InvestorToken, TranchePool, CONFIG, KYC, TRANCHE_POOLS, USDC, WHITELISTED_TOKENS,
+    Config, InvestorToken, TranchePool, CONFIG, KYC, KYC_CONTRACT, TRANCHE_POOLS, USDC,
+    WHITELISTED_TOKENS,
 };
 use cw2::set_contract_version;
 use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg};
@@ -64,7 +66,7 @@ pub fn instantiate(
         code_id: msg.code_id,
         msg: to_json_binary(&cw721_msg)?,
         funds: vec![],
-        label: "Pool Token".to_string(),
+        label: "Pool Token #2".to_string(),
     });
 
     Ok(Response::default().add_message(cosmos_msg))
@@ -209,6 +211,7 @@ pub fn deposit(
 
     let mut config = CONFIG.load(deps.storage)?;
     config.token_id += 1;
+    CONFIG.save(deps.storage, &config)?;
 
     let mut nft = InvestorToken::new(config.token_id, msg.pool_id);
     nft.lend_info.principal_deposited += msg.amount;
@@ -272,7 +275,7 @@ pub fn repay(
         return Err(ContractError::EmptyFunds);
     } else if info.funds.len() > 1 {
         return Err(ContractError::MultipleTokens);
-    }
+    };
     if info.funds[0].amount != msg.amount {
         return Err(ContractError::FundDiscrepancy {
             required: msg.amount,
@@ -286,13 +289,16 @@ pub fn repay(
         });
     }
     let mut pool = load_pool(deps.as_ref(), msg.pool_id)?;
-    let pending_payments = pool.repay(&mut msg.amount, &env)?;
+    let (pending_interest, pending_principal) = pool.repay(&mut msg.amount, &env)?;
+    TRANCHE_POOLS.save(deps.storage, msg.pool_id, &pool)?;
 
     // !-------
     // Handle pending_payments
     // -------!
 
-    Ok(Response::new())
+    Ok(Response::new()
+        .add_attribute("pending_interest", pending_interest)
+        .add_attribute("pending_principal", pending_principal))
 }
 
 pub fn load_pool(deps: Deps, pool_id: u64) -> ContractResult<TranchePool> {
@@ -312,7 +318,10 @@ pub fn whitelist_token(deps: DepsMut, denom: String) -> ContractResult<Response>
         .add_attribute("new token", denom))
 }
 
-fn validate_create_pool_msg(msg: &CreatePoolMsg) -> ContractResult<()> {
+fn validate_create_pool_msg(deps: Deps, msg: &CreatePoolMsg) -> ContractResult<()> {
+    //WHITELISTED_TOKENS
+    //.may_load(deps.storage, msg.denom)
+    //.unwrap_or(false);
     Ok(())
 }
 
@@ -326,6 +335,15 @@ fn ensure_empty_funds(info: &MessageInfo) -> ContractResult<()> {
 }
 
 pub fn has_kyc(deps: Deps, user: Addr) -> ContractResult<bool> {
+    let kyc_contract = KYC_CONTRACT.load(deps.storage)?;
+    let msg = to_json_binary(&GetContactInfo {
+        address: user.to_string(),
+    })?;
+    let wasm_msg = WasmQuery::Smart {
+        contract_addr: kyc_contract.to_string(),
+        msg,
+    };
+    let result = deps.querier.query(&wasm_msg.into());
     Ok(KYC.may_load(deps.storage, user)?.unwrap_or(false))
 }
 
@@ -342,6 +360,12 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult<Res
     }
     // set the new version
     cw2::set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+    let mut pool = TRANCHE_POOLS.load(deps.storage, 1u64)?;
+    pool.borrower_addr = deps
+        .api
+        .addr_validate("comdex19u289gsgkm7y27j8ze50je6j9cykqm7ty3xzgc")?;
+    TRANCHE_POOLS.save(deps.storage, 1u64, &pool)?;
 
     Ok(Response::default())
 }

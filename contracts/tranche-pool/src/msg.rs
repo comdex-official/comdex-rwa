@@ -35,6 +35,7 @@ pub struct CreatePoolMsg {
     pub principal_grace_period: u64,
     pub drawdown_period: u64,
     pub term_length: u64,
+    pub denom: String,
 }
 
 #[cw_serde]
@@ -58,7 +59,14 @@ pub struct RepayMsg {
 #[cw_serde]
 pub enum QueryMsg {
     GetConfig {},
-    GetPoolInfo { id: u64 },
-    CheckKycStatus { user: String },
-    GetAllPools {},
+    GetPoolInfo {
+        id: u64,
+    },
+    CheckKycStatus {
+        user: String,
+    },
+    GetAllPools {
+        start: Option<u64>,
+        limit: Option<u8>,
+    },
 }

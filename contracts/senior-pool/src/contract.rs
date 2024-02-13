@@ -8,6 +8,7 @@ use cosmwasm_std::{
 use cw2::set_contract_version;
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::state::ADMIN;
 use crate::ContractResult;
 
 // version info for migration info
@@ -25,6 +26,9 @@ pub fn instantiate(
     if !info.funds.is_empty() {
         return Err(ContractError::FundsNotAllowed {});
     };
+
+    let admin = deps.api.addr_validate(&msg.admin)?;
+    ADMIN.set(deps, Some(admin))?;
 
     // instantiate cw20
 
