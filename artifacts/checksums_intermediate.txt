@@ -1,3 +1,3 @@
 68845a1734e291733b157c15453dd8e3c3618ea8e32edd15c903544c0793b369  target/wasm32-unknown-unknown/release/cw721_base.wasm
 1511d94bacb0a003a33fad19480dae68f6baa356de5e64c3117b20bfee449687  target/wasm32-unknown-unknown/release/cw721_metadata_onchain.wasm
-bf9f04fc5745c38769bb103455a8d94e537c9bb6e9c74ac1b0ba96a6faeb554c  target/wasm32-unknown-unknown/release/core.wasm
+4313b36aa3158a6972f1a2a4ec20c4488747cbc58b7657992e9b8c7a3d7a173c  target/wasm32-unknown-unknown/release/core.wasm

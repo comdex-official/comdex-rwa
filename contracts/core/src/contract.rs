@@ -127,6 +127,6 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, C
     // set the new version
     cw2::set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     //do any desired state migrations...
-
+    INVOICE.clear(deps.storage);
     Ok(Response::default())
 }

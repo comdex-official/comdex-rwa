@@ -12,7 +12,7 @@ pub fn create_invoice(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    receiver: Addr,
+    payee_address: Addr,
     receivable: Coin,
     amount_paid: Coin,
     service_type: ServiceType,
@@ -24,7 +24,7 @@ pub fn create_invoice(
     }
 
     //// Address cannot be sender////
-    if info.sender == receiver {
+    if info.sender == payee_address {
         return Err(StdError::generic_err("Receiver and Sender cannot be same").into());
     }
 
@@ -54,12 +54,12 @@ pub fn create_invoice(
 
     //// if address doesnt exists in contact _info.contact throw error
     let contacts = sender_contact_info.contacts.clone();
-    if !contacts.contains(&receiver) {
+    if !contacts.contains(&payee_address) {
         return Err(StdError::generic_err("Receiver not in contact list").into());
     }
     
     //// Check if counter party is verified or not
-    let mut receiver_contact_info = CONTACT_INFO.may_load(deps.storage, &receiver)?
+    let mut receiver_contact_info = CONTACT_INFO.may_load(deps.storage, &payee_address)?
     .ok_or_else(|| StdError::generic_err("CounterParty Profile does not exist"))?;
 
     if receiver_contact_info.kyc_status == KYCStatus::Unverified {
@@ -75,7 +75,7 @@ pub fn create_invoice(
     let invoice = Invoice {
         id: invoice_id,
         from: info.sender.clone(),
-        receiver: receiver.clone(),
+        payee_address: payee_address.clone(),
         nft_id: invoice_id ,
         doc_uri: doc_uri.clone(),
         due_amount: due_amount,
@@ -95,12 +95,12 @@ pub fn create_invoice(
 
     ///// updated assigned invoice list
     receiver_contact_info.assigned_invoices.push(invoice_id);
-    CONTACT_INFO.save(deps.storage, &receiver, &receiver_contact_info)?;
+    CONTACT_INFO.save(deps.storage, &payee_address, &receiver_contact_info)?;
 
     let metadata = Metadata {
         invoice_id: invoice_id,
         from: info.sender.clone(),
-        receiver: receiver.clone(),
+        payee_address: payee_address.clone(),
         receivable: receivable.clone(),
         uri: doc_uri.clone(),
     };
@@ -149,7 +149,7 @@ pub fn pay_invoice(
 
     let mut invoice = INVOICE.load(deps.storage, &invoice_id)?;
 
-    if invoice.receiver != info.sender {
+    if invoice.payee_address != info.sender {
         return Err(StdError::generic_err("Receiver and Sender cannot be same").into());
     }
 
@@ -223,7 +223,7 @@ pub fn accept_invoice(
 ) -> Result<Response, ContractError> {
     let mut invoice = INVOICE.load(deps.storage, &invoice_id)?;
 
-    if invoice.receiver != info.sender {
+    if invoice.payee_address != info.sender {
         return Err(ContractError::Unauthorized {});
     }
 
