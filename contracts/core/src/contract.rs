@@ -66,7 +66,7 @@ pub fn execute(
             accepted_assets,
         } => set_config(deps, nft_address, owner, accepted_assets),
         ExecuteMsg::CreateInvoice {
-            address,
+            payee_address,
             receivable,
             amount_paid,
             service_type,
@@ -75,7 +75,7 @@ pub fn execute(
             deps,
             env,
             info,
-            address,
+            payee_address,
             receivable,
             amount_paid,
             service_type,
