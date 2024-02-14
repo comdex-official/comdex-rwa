@@ -11,6 +11,12 @@ pub struct Config {
 }
 
 #[cw_serde]
+pub struct SeniorPoolInfo {
+    pub available: Uint128,
+    pub invested: Uint128,
+}
+
+#[cw_serde]
 pub struct Epoch {
     pub end_time: Timestamp,
     pub lp_token_requested: Uint128,
@@ -32,5 +38,6 @@ pub trait InvestmentStrategy {
     fn estimate_investment(pool_id: u64) -> ContractResult<Uint128>;
 }
 
+pub const FUND_INFO: Item<SeniorPoolInfo> = Item::new("senior_pool_funds");
 pub const ADMIN: Admin = Admin::new("admin");
 pub const CONFIG: Item<Config> = Item::new("config");

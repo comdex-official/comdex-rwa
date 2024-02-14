@@ -5,6 +5,13 @@ use cosmwasm_std::{
     Response, StdError, WasmMsg, WasmQuery,
 };
 
+use rwa_core::{
+    msg::QueryMsg as CoreQuery,
+    state::{ContactInfo, KYCStatus},
+};
+use cw2::set_contract_version;
+use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg};
+
 use crate::credit_line::CreditLine;
 use crate::error::{ContractError, ContractResult};
 use crate::helpers::get_grace_period;
@@ -15,8 +22,6 @@ use crate::state::{
     Config, InvestorToken, TranchePool, CONFIG, KYC, KYC_CONTRACT, TRANCHE_POOLS, USDC,
     WHITELISTED_TOKENS,
 };
-use cw2::set_contract_version;
-use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg};
 
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -263,14 +268,14 @@ pub fn repay(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    mut msg: RepayMsg,
+    msg: RepayMsg,
 ) -> ContractResult<Response> {
     if !has_kyc(deps.as_ref(), info.sender.clone())? {
         return Err(ContractError::CustomError {
             msg: "non-KYC user".to_string(),
         });
     }
-    if info.funds.is_empty() {
+    if info.funds.is_empty() || info.funds[0].amount.is_zero() {
         return Err(ContractError::EmptyFunds);
     } else if info.funds.len() > 1 {
         return Err(ContractError::MultipleTokens);
@@ -288,7 +293,8 @@ pub fn repay(
         });
     }
     let mut pool = load_pool(deps.as_ref(), msg.pool_id)?;
-    let (pending_interest, pending_principal) = pool.repay(&mut msg.amount, &env)?;
+    let mut amount = msg.amount;
+    let (pending_interest, pending_principal) = pool.repay(&mut amount, &env)?;
     TRANCHE_POOLS.save(deps.storage, msg.pool_id, &pool)?;
 
     // !-------
@@ -334,16 +340,17 @@ fn ensure_empty_funds(info: &MessageInfo) -> ContractResult<()> {
 }
 
 pub fn has_kyc(deps: Deps, user: Addr) -> ContractResult<bool> {
-    //let kyc_contract = KYC_CONTRACT.load(deps.storage)?;
-    //let msg = to_json_binary(&GetContactInfo {
-        //address: user.to_string(),
-    //})?;
-    //let wasm_msg = WasmQuery::Smart {
-        //contract_addr: kyc_contract.to_string(),
-        //msg,
-    //};
-    //let result = deps.querier.query(&wasm_msg.into());
-    Ok(KYC.may_load(deps.storage, user)?.unwrap_or(false))
+    let kyc_contract = KYC_CONTRACT.load(deps.storage)?;
+    let msg = to_json_binary(&CoreQuery::GetContactInfo { address: user })?;
+    let wasm_msg = WasmQuery::Smart {
+        contract_addr: kyc_contract.to_string(),
+        msg,
+    };
+    let result = deps.querier.query::<ContactInfo>(&wasm_msg.into())?;
+    match result.kyc_status {
+        KYCStatus::Approved => Ok(true),
+        _ => Ok(false)
+    }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
