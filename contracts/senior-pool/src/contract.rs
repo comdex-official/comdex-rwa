@@ -89,6 +89,8 @@ pub fn deposit(
         _ => return Err(ContractError::MultipleDenoms {}),
     }
 
+    // epoch update
+
     let mut fund_info = FUND_INFO.load(deps.storage)?;
     fund_info.available += msg.amount;
     FUND_INFO.save(deps.storage, &fund_info)?;
