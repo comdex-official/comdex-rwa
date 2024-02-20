@@ -33,7 +33,7 @@ pub struct Contact {
 pub struct Metadata {
     pub invoice_id: u64,
     pub from: Addr,
-    pub receiver: Addr,
+    pub payee_address: Addr,
     pub uri: String,
     pub receivable: Coin,
 }
@@ -89,7 +89,7 @@ pub enum KYCStatus {
 pub struct Invoice {
     pub id: u64,
     pub from: Addr,
-    pub receiver: Addr,
+    pub payee_address: Addr,
     pub nft_id: u64,
     pub doc_uri: String,
     pub due_amount: Coin,

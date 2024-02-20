@@ -66,7 +66,7 @@ pub fn execute(
             accepted_assets,
         } => set_config(deps, nft_address, owner, accepted_assets),
         ExecuteMsg::CreateInvoice {
-            address,
+            payee_address,
             receivable,
             amount_paid,
             service_type,
@@ -75,7 +75,7 @@ pub fn execute(
             deps,
             env,
             info,
-            address,
+            payee_address,
             receivable,
             amount_paid,
             service_type,
@@ -127,6 +127,6 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, C
     // set the new version
     cw2::set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     //do any desired state migrations...
-
+    //INVOICE.clear(deps.storage);
     Ok(Response::default())
 }

@@ -32,7 +32,7 @@ pub enum ExecuteMsg {
         address: String,
     },
     CreateInvoice {
-        address: Addr,
+        payee_address: Addr,
         receivable: Coin,
         amount_paid: Coin,
         service_type: ServiceType,

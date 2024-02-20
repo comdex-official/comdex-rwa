@@ -58,7 +58,7 @@ pub fn get_pending_invoices(deps: Deps, address: Addr) -> StdResult<RequestRespo
         }
         let invoice = invoice.unwrap();
         if invoice.status != Status::Paid {
-            let contact_info = CONTACT_INFO.load(deps.storage, &invoice.receiver)?;
+            let contact_info = CONTACT_INFO.load(deps.storage, &invoice.payee_address)?;
             sent_invoices.push(InvoiceResponse {
                 invoice: invoice,
                 contact: ContactResponse {
@@ -111,7 +111,7 @@ pub fn get_executed_invoices(deps: Deps, address: Addr) -> StdResult<RequestResp
         }
         let invoice = invoice.unwrap();
         if invoice.status == Status::Paid {
-            let contact_info = CONTACT_INFO.load(deps.storage, &invoice.receiver)?;
+            let contact_info = CONTACT_INFO.load(deps.storage, &invoice.payee_address)?;
             sent_invoices.push(InvoiceResponse {
                 invoice: invoice,
                 contact: ContactResponse {
