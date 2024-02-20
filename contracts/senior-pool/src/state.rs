@@ -8,6 +8,8 @@ use crate::ContractResult;
 #[cw_serde]
 pub struct Config {
     pub lp_token: String,
+    pub pool_denom: String,
+    
 }
 
 #[cw_serde]
