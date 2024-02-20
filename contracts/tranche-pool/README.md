@@ -8,7 +8,7 @@ MSG='{"admins":[""],"token_issuer":"","usdc_denom":"ucmdx","code_id":27}'
 ## Update KYC
 
 ```sh
-MSG='{"update_kyc":{"user":"","kyc_status":false}}'
+MSG='{"update_kyc":{"user":"","kyc_status":true}}'
 ```
 
 ## Create Pool

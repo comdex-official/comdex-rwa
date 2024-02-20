@@ -5,12 +5,12 @@ use cosmwasm_std::{
     Response, StdError, WasmMsg, WasmQuery,
 };
 
+use cw2::set_contract_version;
+use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg};
 use rwa_core::{
     msg::QueryMsg as CoreQuery,
     state::{ContactInfo, KYCStatus},
 };
-use cw2::set_contract_version;
-use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg};
 
 use crate::credit_line::CreditLine;
 use crate::error::{ContractError, ContractResult};
@@ -121,7 +121,9 @@ pub fn create_pool(
     // - verify all `msg` parameters
     ensure_empty_funds(&info)?;
     let borrower = deps.api.addr_validate(&msg.borrower)?;
-    if info.sender != borrower {
+    let mut config = CONFIG.load(deps.as_ref().storage)?;
+    let is_admin = config.admins.iter().any(|admin| info.sender == admin);
+    if info.sender != borrower && !is_admin {
         return Err(ContractError::Unauthorized {});
     };
     if !has_kyc(deps.as_ref(), borrower.clone())? {
@@ -146,9 +148,7 @@ pub fn create_pool(
     );
 
     // create pool
-    let mut config = CONFIG.load(deps.as_ref().storage)?;
     config.pool_id += 1;
-    let borrower = deps.api.addr_validate(&msg.borrower)?;
     let tranche_pool = TranchePool::new(
         config.pool_id,
         msg.pool_name,
@@ -340,6 +340,7 @@ fn ensure_empty_funds(info: &MessageInfo) -> ContractResult<()> {
 }
 
 pub fn has_kyc(deps: Deps, user: Addr) -> ContractResult<bool> {
+    //Ok(KYC.may_load(deps.storage, user)?.unwrap_or_default())
     let kyc_contract = KYC_CONTRACT.load(deps.storage)?;
     let msg = to_json_binary(&CoreQuery::GetContactInfo { address: user })?;
     let wasm_msg = WasmQuery::Smart {
@@ -349,7 +350,7 @@ pub fn has_kyc(deps: Deps, user: Addr) -> ContractResult<bool> {
     let result = deps.querier.query::<ContactInfo>(&wasm_msg.into())?;
     match result.kyc_status {
         KYCStatus::Approved => Ok(true),
-        _ => Ok(false)
+        _ => Ok(false),
     }
 }
 
@@ -366,12 +367,6 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult<Res
     }
     // set the new version
     cw2::set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
-    let mut pool = TRANCHE_POOLS.load(deps.storage, 1u64)?;
-    pool.borrower_addr = deps
-        .api
-        .addr_validate("comdex19u289gsgkm7y27j8ze50je6j9cykqm7ty3xzgc")?;
-    TRANCHE_POOLS.save(deps.storage, 1u64, &pool)?;
 
     Ok(Response::default())
 }
