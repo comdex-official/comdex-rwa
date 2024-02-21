@@ -1,10 +1,10 @@
 use crate::state::PaymentFrequency;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Uint128};
+use cosmwasm_std::Uint128;
 
 #[cw_serde]
 pub struct InstantiateMsg {
-    pub admins: Vec<String>,
+    pub admin: String,
     pub token_issuer: String,
     pub usdc_denom: String,
     pub code_id: u64,
@@ -13,10 +13,10 @@ pub struct InstantiateMsg {
 #[cw_serde]
 pub enum ExecuteMsg {
     NewPool { msg: CreatePoolMsg },
-    UpdateKyc { user: Addr, kyc_status: bool },
     Deposit { msg: DepositMsg },
     Repay { msg: RepayMsg },
     Drawdown { msg: DrawdownMsg },
+    AddBackers { backers: Vec<String> },
 }
 
 #[cw_serde]
@@ -29,6 +29,8 @@ pub struct CreatePoolMsg {
     pub borrower_name: String,
     pub uid_token: Uint128,
     pub interest_apr: u16,
+    pub junior_fee_percent: u16,
+    pub late_fee_apr: u16,
     pub borrow_limit: Uint128,
     pub interest_payment_frequency: PaymentFrequency,
     pub principal_payment_frequency: PaymentFrequency,

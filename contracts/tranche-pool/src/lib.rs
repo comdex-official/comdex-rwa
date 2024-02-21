@@ -5,6 +5,8 @@ pub mod state;
 pub mod credit_line;
 pub mod helpers;
 pub mod query;
+pub mod tranche_pool;
+pub mod implementation;
 
 use cosmwasm_std::Uint128;
 

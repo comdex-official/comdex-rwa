@@ -7,20 +7,19 @@ use cosmwasm_std::{
 
 use cw2::set_contract_version;
 use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg};
-use rwa_core::{
-    msg::QueryMsg as CoreQuery,
-    state::{ContactInfo, KYCStatus},
-};
 
-use crate::credit_line::CreditLine;
-use crate::error::{ContractError, ContractResult};
-use crate::helpers::get_grace_period;
-use crate::msg::{
-    CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, RepayMsg,
-};
-use crate::state::{
-    Config, InvestorToken, TranchePool, CONFIG, KYC, KYC_CONTRACT, TRANCHE_POOLS, USDC,
-    WHITELISTED_TOKENS,
+use crate::{
+    error::{ContractError, ContractResult},
+    helpers::{
+        ensure_empty_funds, ensure_kyc, get_grace_period, initialize_next_slice,
+        validate_create_pool_msg,
+    },
+    msg::{
+        CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, RepayMsg,
+    },
+    state::{
+        Config, CreditLine, InvestorToken, PoolSlice, TranchePool, CONFIG, CREDIT_LINES, KYC, KYC_CONTRACT, POOL_SLICES, TRANCHE_POOLS, USDC, WHITELISTED_TOKENS
+    },
 };
 
 // version info for migration info
@@ -37,20 +36,10 @@ pub fn instantiate(
     ensure_empty_funds(&info)?;
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
-    let admins: Vec<Addr> = msg
-        .admins
-        .iter()
-        .map_while(|val| deps.api.addr_validate(val).ok())
-        .collect();
-    if admins.len() < msg.admins.len() {
-        return Err(ContractError::InvalidAdmin {
-            address: msg.admins[admins.len()].to_owned(),
-        });
-    };
-
+    let admin = deps.api.addr_validate(&msg.admin)?;
     let config = Config {
         pool_id: 0,
-        admins,
+        admin,
         grace_period: None,
         token_id: 0,
         token_issuer: deps.api.addr_validate(&msg.token_issuer)?,
@@ -87,29 +76,15 @@ pub fn execute(
 ) -> ContractResult<Response> {
     match msg {
         ExecuteMsg::NewPool { msg } => create_pool(deps, env, info, msg),
-        ExecuteMsg::UpdateKyc { user, kyc_status } => {
-            update_user_kyc(deps, env, info, user, kyc_status)
-        }
         ExecuteMsg::Deposit { msg } => deposit(deps, env, info, msg),
         ExecuteMsg::Repay { msg } => repay(deps, env, info, msg),
         ExecuteMsg::Drawdown { msg } => drawdown(deps, env, info, msg),
+        _ => todo!(),
     }
 }
 
-pub fn update_user_kyc(
-    deps: DepsMut,
-    _env: Env,
-    _info: MessageInfo,
-    user: Addr,
-    kyc_status: bool,
-) -> ContractResult<Response> {
-    KYC.save(deps.storage, user.clone(), &kyc_status)?;
-
-    Ok(Response::new().add_attribute(user.to_string(), kyc_status.to_string()))
-}
-
 pub fn create_pool(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     msg: CreatePoolMsg,
@@ -117,20 +92,15 @@ pub fn create_pool(
     // !-------
     // necessary validations
     // -------!
-    // - verify sender
     // - verify all `msg` parameters
-    ensure_empty_funds(&info)?;
     let borrower = deps.api.addr_validate(&msg.borrower)?;
     let mut config = CONFIG.load(deps.as_ref().storage)?;
-    let is_admin = config.admins.iter().any(|admin| info.sender == admin);
-    if info.sender != borrower && !is_admin {
+    if info.sender != borrower && info.sender != config.admin {
         return Err(ContractError::Unauthorized {});
     };
-    if !has_kyc(deps.as_ref(), borrower.clone())? {
-        return Err(ContractError::CustomError {
-            msg: "non-KYC user".to_string(),
-        });
-    }
+    ensure_empty_funds(&info)?;
+    ensure_kyc(deps.as_ref(), borrower.clone())?;
+    validate_create_pool_msg(deps.as_ref(), &info, &msg)?;
 
     let grace_period = get_grace_period(deps.as_ref())?;
 
@@ -154,12 +124,15 @@ pub fn create_pool(
         msg.pool_name,
         borrower.clone(),
         msg.borrower_name,
-        msg.drawdown_period,
-        grace_period,
-        credit_line,
+        msg.denom,
         &env,
     );
+
+    // initialize pool slice
+    initialize_next_slice(deps.branch(), tranche_pool.pool_id)?;
+
     TRANCHE_POOLS.save(deps.storage, tranche_pool.pool_id, &tranche_pool)?;
+    CREDIT_LINES.save(deps.storage, tranche_pool.pool_id, &credit_line)?;
 
     Ok(Response::new()
         .add_attribute("method", "create_pool")
@@ -175,11 +148,7 @@ pub fn deposit(
     // !-------
     // the addr of user should be in the backer list to allow deposit
     // -------!
-    if !has_kyc(deps.as_ref(), info.sender.clone())? {
-        return Err(ContractError::CustomError {
-            msg: "non-KYC user".to_string(),
-        });
-    }
+    ensure_kyc(deps.as_ref(), info.sender.clone())?;
     match info.funds.len() {
         0 => return Err(ContractError::EmptyFunds),
         1 if info.funds[0].amount.is_zero() => return Err(ContractError::EmptyFunds),
@@ -321,37 +290,6 @@ pub fn whitelist_token(deps: DepsMut, denom: String) -> ContractResult<Response>
     Ok(Response::new()
         .add_attribute("method", "whitelist_token")
         .add_attribute("new token", denom))
-}
-
-fn validate_create_pool_msg(deps: Deps, msg: &CreatePoolMsg) -> ContractResult<()> {
-    //WHITELISTED_TOKENS
-    //.may_load(deps.storage, msg.denom)
-    //.unwrap_or(false);
-    Ok(())
-}
-
-fn ensure_empty_funds(info: &MessageInfo) -> ContractResult<()> {
-    match info.funds.len() {
-        0 => {}
-        1 if info.funds[0].amount.is_zero() => {}
-        _ => return Err(ContractError::FundsNotAllowed),
-    }
-    Ok(())
-}
-
-pub fn has_kyc(deps: Deps, user: Addr) -> ContractResult<bool> {
-    //Ok(KYC.may_load(deps.storage, user)?.unwrap_or_default())
-    let kyc_contract = KYC_CONTRACT.load(deps.storage)?;
-    let msg = to_json_binary(&CoreQuery::GetContactInfo { address: user })?;
-    let wasm_msg = WasmQuery::Smart {
-        contract_addr: kyc_contract.to_string(),
-        msg,
-    };
-    let result = deps.querier.query::<ContactInfo>(&wasm_msg.into())?;
-    match result.kyc_status {
-        KYCStatus::Approved => Ok(true),
-        _ => Ok(false),
-    }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

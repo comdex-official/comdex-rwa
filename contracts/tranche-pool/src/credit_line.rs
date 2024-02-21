@@ -1,48 +1,8 @@
-use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Decimal, Env, Timestamp, Uint128};
 
 use crate::error::{ContractError, ContractResult};
-use crate::state::{LendInfo, PaymentFrequency};
+use crate::state::{LendInfo, PaymentFrequency, CreditLine};
 use crate::{SIY, TEN_THOUSAND};
-
-#[cw_serde]
-#[derive(Default)]
-pub struct BorrowInfo {
-    /// The total borrow limit approved by the backers in the proposal.
-    pub borrow_limit: Uint128,
-    /// This is the total amount borrowed from the pool, this is fixed at the
-    /// end of the drawdown period
-    pub total_borrowed: Uint128,
-    /// This is the remaining borrowed amount that is yet to be repaid.
-    /// In essence, total_borrowed - principal repaid
-    pub borrowed_amount: Uint128,
-    pub interest_repaid: Uint128,
-    pub principal_repaid: Uint128,
-    pub principal_share_price: Decimal,
-    pub interest_share_price: Decimal,
-}
-
-#[cw_serde]
-#[derive(Default)]
-pub struct CreditLine {
-    /// Prior this date, no interest is charged
-    pub term_start: Timestamp,
-    /// Post this date, all accrued interest is due
-    pub term_end: Timestamp,
-    /// Grace period post due date
-    pub grace_period: u64,
-    /// Initial grace period for principal repayment
-    pub principal_grace_period: u64,
-    pub borrow_info: BorrowInfo,
-    /// 12.50% interest is represented as 1250
-    pub interest_apr: u16,
-    pub interest_frequency: PaymentFrequency,
-    pub principal_frequency: PaymentFrequency,
-    pub interest_accrued: Uint128,
-    pub interest_owed: Uint128,
-    pub last_full_payment: Timestamp,
-    pub last_update_ts: Timestamp,
-}
 
 impl CreditLine {
     pub fn new(
@@ -357,21 +317,6 @@ impl CreditLine {
             self.last_full_payment = env.block.time;
         }
         Ok((interest_pending, principal_pending))
-    }
-
-    pub fn usdc_to_share_price(amount: Uint128, total_shares: Uint128) -> ContractResult<Decimal> {
-        Ok(Decimal::new(
-            amount.checked_div(total_shares).unwrap_or_default(),
-        ))
-    }
-
-    pub fn share_price_to_usdc(
-        share_price: Decimal,
-        total_shares: Uint128,
-    ) -> ContractResult<Uint128> {
-        Ok(share_price
-            .checked_mul(Decimal::new(total_shares))?
-            .to_uint_floor())
     }
 
     pub fn redeemable_interest_and_amount(

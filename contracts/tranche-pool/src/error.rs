@@ -44,6 +44,13 @@ pub enum ContractError {
     #[error("Drawdown period has ended")]
     NotInDrawdownPeriod,
 
+    #[error("Max slice limit reached")]
+    MaxSliceLimit,
+
+    #[error("Not a whitelisted token")]
+    DenomNotWhitelisted,
+
+
     #[error("{msg}")]
     CustomError { msg: String }
 }
