@@ -50,6 +50,11 @@ pub enum ContractError {
     #[error("Not a whitelisted token")]
     DenomNotWhitelisted,
 
+    #[error("Senior tranche deposit by non senior pool entity")]
+    NotSeniorPool,
+
+    #[error("Senior Pool contract not found for {denom}")]
+    SeniorPoolNotFound {denom: String},
 
     #[error("{msg}")]
     CustomError { msg: String }

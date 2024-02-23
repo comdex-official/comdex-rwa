@@ -66,9 +66,9 @@ pub struct PoolSlice {
 #[derive(Default)]
 pub struct CreditLine {
     /// Prior this date, no interest is charged
-    pub term_start: Timestamp,
+    pub term_start: Option<Timestamp>,
     /// Post this date, all accrued interest is due
-    pub term_end: Timestamp,
+    pub term_end: Option<Timestamp>,
     /// Grace period post due date
     pub grace_period: u64,
     /// Initial grace period for principal repayment
@@ -132,6 +132,6 @@ pub const CREDIT_LINES: Map<u64, CreditLine> = Map::new("credit_lines");
 pub const POOL_SLICES: Map<u64, Vec<PoolSlice>> = Map::new("pool_slices");
 pub const BORROWERS: Map<Addr, ACI> = Map::new("borrowers");
 pub const WHITELISTED_TOKENS: Map<String, bool> = Map::new("whitelisted_tokens");
-pub const USDC: Item<String> = Item::new("usdc_denom");
 pub const KYC: Map<Addr, bool> = Map::new("user_kyc");
 pub const RESERVES: Item<Uint128> = Item::new("reserves");
+pub const SENIOR_POOLS: Map<String, Addr> = Map::new("senior_pools");

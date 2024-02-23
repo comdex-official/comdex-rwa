@@ -1,8 +1,11 @@
+// TODO
+// - add txns to change the backer list
+// - add txn to change the senior-pool contract addr
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     coins, to_json_binary, Addr, BankMsg, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
-    Response, StdError, WasmMsg, WasmQuery,
+    Response, StdError, Uint128, WasmMsg, WasmQuery,
 };
 
 use cw2::set_contract_version;
@@ -11,20 +14,23 @@ use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721Intantiat
 use crate::{
     error::{ContractError, ContractResult},
     helpers::{
-        ensure_empty_funds, ensure_kyc, get_grace_period, initialize_next_slice,
-        validate_create_pool_msg,
+        ensure_empty_funds, ensure_kyc, ensure_whitelisted_denom, get_grace_period,
+        get_tranche_info, initialize_next_slice, is_backer, validate_create_pool_msg,
     },
     msg::{
         CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, RepayMsg,
     },
     state::{
-        Config, CreditLine, InvestorToken, PoolSlice, TranchePool, CONFIG, CREDIT_LINES, KYC, KYC_CONTRACT, POOL_SLICES, TRANCHE_POOLS, USDC, WHITELISTED_TOKENS
+        Config, CreditLine, InvestorToken, PoolSlice, TranchePool, CONFIG, CREDIT_LINES, KYC,
+        KYC_CONTRACT, POOL_SLICES, SENIOR_POOLS, TRANCHE_POOLS, USDC, WHITELISTED_TOKENS,
     },
 };
 
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+// Minimum investment of $10,000 to become a backer if not in backer list
+const MIN_DEPOSIT: Uint128 = Uint128::new(10_000_000_000u128);
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -45,7 +51,6 @@ pub fn instantiate(
         token_issuer: deps.api.addr_validate(&msg.token_issuer)?,
     };
     CONFIG.save(deps.storage, &config)?;
-    USDC.save(deps.storage, &msg.usdc_denom)?;
 
     let cw721_msg = Cw721IntantiateMsg {
         name: "PoolToken".to_string(),
@@ -102,6 +107,18 @@ pub fn create_pool(
     ensure_kyc(deps.as_ref(), borrower.clone())?;
     validate_create_pool_msg(deps.as_ref(), &info, &msg)?;
 
+    SENIOR_POOLS
+        .load(deps.storage, msg.denom.clone())
+        .map_err(|_| ContractError::CustomError {
+            msg: format!("Senior Pool not set for {}", msg.denom),
+        })?;
+
+    let backers = msg
+        .backers
+        .iter()
+        .filter_map(|address| deps.api.addr_validate(address).ok())
+        .collect();
+
     let grace_period = get_grace_period(deps.as_ref())?;
 
     // create credit line
@@ -112,8 +129,10 @@ pub fn create_pool(
         grace_period,
         msg.principal_grace_period,
         msg.interest_apr,
-        msg.interest_payment_frequency,
-        msg.principal_payment_frequency,
+        msg.late_fee_apr,
+        msg.junior_fee_percent,
+        msg.interest_frequency,
+        msg.principal_frequency,
         &env,
     );
 
@@ -125,6 +144,7 @@ pub fn create_pool(
         borrower.clone(),
         msg.borrower_name,
         msg.denom,
+        backers,
         &env,
     );
 
@@ -145,9 +165,7 @@ pub fn deposit(
     info: MessageInfo,
     msg: DepositMsg,
 ) -> ContractResult<Response> {
-    // !-------
-    // the addr of user should be in the backer list to allow deposit
-    // -------!
+    // basic contraints
     ensure_kyc(deps.as_ref(), info.sender.clone())?;
     match info.funds.len() {
         0 => return Err(ContractError::EmptyFunds),
@@ -155,19 +173,6 @@ pub fn deposit(
         1 => {}
         _ => return Err(ContractError::MultipleTokens),
     };
-    let usdc_denom = USDC.load(deps.storage)?;
-    if info.funds[0].denom != usdc_denom {
-        return Err(ContractError::CustomError {
-            msg: "Not USDC".to_string(),
-        });
-    }
-
-    //let iswhitelisted = WHITELISTED_TOKENS
-    //.may_load(deps.storage, info.funds[0].denom.clone())?
-    //.unwrap_or_default();
-    //if !iswhitelisted {
-    //return Err(ContractError::Unauthorized {});
-    //}
 
     if info.funds[0].amount != msg.amount {
         return Err(ContractError::FundDiscrepancy {
@@ -176,11 +181,39 @@ pub fn deposit(
         });
     }
 
-    let mut pool = TRANCHE_POOLS
+    let pool = TRANCHE_POOLS
         .load(deps.storage, msg.pool_id)
         .map_err(|_| ContractError::InvalidPoolId { id: msg.pool_id })?;
-    pool.deposit(msg.amount, &env)?;
-    TRANCHE_POOLS.save(deps.storage, msg.pool_id, &pool)?;
+    if pool.denom != info.funds[0].denom {
+        return Err(ContractError::CustomError {
+            msg: "Incorrect denom for deposit".to_string(),
+        });
+    }
+
+    // non-backer should deposit minimum set amount
+    if !pool.is_backer(&info.sender) && msg.amount < MIN_DEPOSIT {
+        return Err(ContractError::CustomError {
+            msg: format!("Minimum deposit amount for non backers is {MIN_DEPOSIT}"),
+        });
+    };
+
+    let senior_pool = SENIOR_POOLS
+        .load(deps.storage, pool.denom.clone())
+        .map_err(|_| ContractError::SeniorPoolNotFound {
+            denom: pool.denom.clone(),
+        })?;
+
+    let mut slices = POOL_SLICES
+        .load(deps.storage, msg.pool_id)
+        .map_err(|_| ContractError::InvalidPoolId { id: msg.pool_id })?;
+    let tranche_info = get_tranche_info(msg.tranche_id, &mut slices)?;
+
+    // Only senior pool can deposit in senior tranche
+    if tranche_info.is_senior_tranche() && info.sender != senior_pool {
+        return Err(ContractError::NotSeniorPool);
+    }
+    tranche_info.principal_deposited = tranche_info.principal_deposited.checked_add(msg.amount)?;
+    POOL_SLICES.save(deps.storage, msg.pool_id, &slices);
 
     let mut config = CONFIG.load(deps.storage)?;
     config.token_id += 1;
@@ -194,13 +227,19 @@ pub fn deposit(
         token_uri: None,
         extension: nft,
     });
-    let msg = WasmMsg::Execute {
+    let wasm_msg = WasmMsg::Execute {
         contract_addr: config.token_issuer.to_string(),
         msg: to_json_binary(&mint_msg)?,
         funds: vec![],
     };
 
-    Ok(Response::new().add_message(msg))
+    Ok(Response::new()
+        .add_attribute("method", "deposit")
+        .add_attribute("depositer", info.sender)
+        .add_attribute("amount", msg.amount.to_string())
+        .add_attribute("denom", pool.denom)
+        .add_attribute("tranche_id", tranche_info.id.to_string())
+        .add_message(wasm_msg))
 }
 
 pub fn drawdown(

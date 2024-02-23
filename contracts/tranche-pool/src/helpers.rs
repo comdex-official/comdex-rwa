@@ -1,6 +1,7 @@
 use cosmwasm_std::{to_json_binary, Addr, Decimal, Deps, DepsMut, MessageInfo, Uint128, WasmQuery};
 
 use crate::error::{ContractError, ContractResult};
+use crate::state::TrancheInfo;
 use crate::{
     msg::CreatePoolMsg,
     state::{PoolSlice, CONFIG, KYC_CONTRACT, POOL_SLICES, WHITELISTED_TOKENS},
@@ -10,6 +11,23 @@ use rwa_core::{
     msg::QueryMsg as CoreQuery,
     state::{ContactInfo, KYCStatus},
 };
+
+pub fn get_tranche_info<'a>(
+    tranche_id: u64,
+    slices: &'a mut Vec<PoolSlice>,
+) -> ContractResult<&'a mut TrancheInfo> {
+    let slice_index = tranche_id as usize / 2;
+    if slice_index >= slices.len() {
+        return Err(ContractError::CustomError {
+            msg: "tranche id exceeds range".to_string(),
+        });
+    }
+    Ok(if tranche_id % 2 == 0 {
+        &mut slices[slice_index].junior_tranche
+    } else {
+        &mut slices[slice_index].senior_tranche
+    })
+}
 
 pub fn validate_create_pool_msg(
     deps: Deps,

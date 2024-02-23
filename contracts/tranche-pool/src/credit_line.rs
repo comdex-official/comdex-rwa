@@ -1,7 +1,8 @@
 use cosmwasm_std::{Decimal, Env, Timestamp, Uint128};
 
 use crate::error::{ContractError, ContractResult};
-use crate::state::{LendInfo, PaymentFrequency, CreditLine};
+use crate::helpers::share_price_to_usdc;
+use crate::state::{CreditLine, LendInfo, PaymentFrequency};
 use crate::{SIY, TEN_THOUSAND};
 
 impl CreditLine {
@@ -12,17 +13,19 @@ impl CreditLine {
         grace_period: u64,
         principal_grace_period: u64,
         interest_apr: u16,
-        interest_frequncy: PaymentFrequency,
+        late_fee_apr: u16,
+        junior_fee_percent: u16,
+        interest_frequency: PaymentFrequency,
         principal_frequency: PaymentFrequency,
         env: &Env,
     ) -> Self {
         let mut credit_line = CreditLine::default();
-        credit_line.term_start = env.block.time.plus_seconds(drawdown_period);
-        credit_line.term_end = credit_line.term_start.plus_seconds(term_length);
         credit_line.grace_period = grace_period;
         credit_line.principal_frequency = principal_frequency;
         credit_line.interest_frequency = interest_frequncy;
         credit_line.interest_apr = interest_apr;
+        credit_line.late_fee_apr = late_fee_apr;
+        credit_line.junior_fee_percent = junior_fee_percent;
         credit_line.principal_grace_period = principal_grace_period;
         credit_line.last_update_ts = env.block.time;
         credit_line.borrow_info.borrow_limit = borrow_limit;
@@ -49,8 +52,10 @@ impl CreditLine {
             });
         }
 
-        if env.block.time >= self.term_start {
-            return Err(ContractError::NotInDrawdownPeriod);
+        if let Some(&term_start) = self.term_start.as_ref() {
+            if env.block.time >= term_start {
+                return Err(ContractError::NotInDrawdownPeriod);
+            }
         }
 
         self.checkpoint(env)?;
@@ -323,11 +328,11 @@ impl CreditLine {
         &self,
         lend_info: &LendInfo,
     ) -> ContractResult<(Uint128, Uint128)> {
-        let max_principal_redeemable = CreditLine::share_price_to_usdc(
+        let max_principal_redeemable = share_price_to_usdc(
             self.borrow_info.principal_share_price,
             lend_info.principal_deposited,
         )?;
-        let max_interest_redeemable = CreditLine::share_price_to_usdc(
+        let max_interest_redeemable = share_price_to_usdc(
             self.borrow_info.interest_share_price,
             lend_info.principal_deposited,
         )?;

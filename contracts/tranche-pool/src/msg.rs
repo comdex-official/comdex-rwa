@@ -6,7 +6,6 @@ use cosmwasm_std::Uint128;
 pub struct InstantiateMsg {
     pub admin: String,
     pub token_issuer: String,
-    pub usdc_denom: String,
     pub code_id: u64,
 }
 
@@ -32,18 +31,20 @@ pub struct CreatePoolMsg {
     pub junior_fee_percent: u16,
     pub late_fee_apr: u16,
     pub borrow_limit: Uint128,
-    pub interest_payment_frequency: PaymentFrequency,
-    pub principal_payment_frequency: PaymentFrequency,
+    pub interest_frequency: PaymentFrequency,
+    pub principal_frequency: PaymentFrequency,
     pub principal_grace_period: u64,
     pub drawdown_period: u64,
     pub term_length: u64,
     pub denom: String,
+    pub backers: Vec<String>,
 }
 
 #[cw_serde]
 pub struct DepositMsg {
     pub amount: Uint128,
     pub pool_id: u64,
+    pub tranche_id: u64,
 }
 
 #[cw_serde]

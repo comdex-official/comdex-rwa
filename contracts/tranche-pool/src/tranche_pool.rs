@@ -13,6 +13,7 @@ impl TranchePool {
         borrower: Addr,
         borrower_name: String,
         denom: String,
+        backers: Vec<Addr>,
         env: &Env,
     ) -> Self {
         TranchePool {
@@ -22,20 +23,12 @@ impl TranchePool {
             borrower_name,
             creation_info: env.block.time,
             denom,
-            backers: Vec::new(),
+            backers,
         }
     }
 
-    pub fn deposit(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
-        if env.block.time > self.credit_line.term_start {
-            return Err(ContractError::CustomError {
-                msg: "Deposits not allowed after term start".to_string(),
-            });
-        }
-        let junior_principal = self.junior_tranche.principal_deposited;
-        self.junior_tranche.principal_deposited = junior_principal.checked_add(amount)?;
-
-        Ok(())
+    pub fn is_backer(&self, user: &Addr) -> bool {
+        self.backers.iter().any(|backer| backer == user)
     }
 
     pub fn drawdown(&mut self, amount: Uint128, env: &Env) -> ContractResult<()> {
