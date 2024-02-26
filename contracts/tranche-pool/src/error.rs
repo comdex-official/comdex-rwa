@@ -38,7 +38,7 @@ pub enum ContractError {
     #[error("{id} is not a valid Pool ID")]
     InvalidPoolId { id: u64 },
 
-    #[error("Drawdown amount exceeds total limit({limit})")]
+    #[error("Drawdown amount exceeds limit({limit})")]
     DrawdownExceedsLimit { limit: Uint128 },
 
     #[error("Drawdown period has ended")]

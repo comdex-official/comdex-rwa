@@ -54,6 +54,11 @@ pub struct DrawdownMsg {
 }
 
 #[cw_serde]
+pub struct LockPoolMsg {
+    pub pool_id: u64,
+}
+
+#[cw_serde]
 pub struct RepayMsg {
     pub pool_id: u64,
     pub amount: Uint128,

@@ -5,7 +5,7 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     coins, to_json_binary, Addr, BankMsg, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
-    Response, StdError, Uint128, WasmMsg, WasmQuery,
+    Response, StdError, Timestamp, Uint128, WasmMsg, WasmQuery,
 };
 
 use cw2::set_contract_version;
@@ -14,15 +14,17 @@ use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721Intantiat
 use crate::{
     error::{ContractError, ContractResult},
     helpers::{
-        ensure_empty_funds, ensure_kyc, ensure_whitelisted_denom, get_grace_period,
-        get_tranche_info, initialize_next_slice, is_backer, validate_create_pool_msg,
+        ensure_drawdown_unpaused, ensure_empty_funds, ensure_kyc, ensure_whitelisted_denom,
+        get_grace_period, get_tranche_info, initialize_next_slice, is_backer, share_price_to_usdc,
+        validate_create_pool_msg,
     },
     msg::{
-        CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, RepayMsg,
+        CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, LockPoolMsg,
+        MigrateMsg, RepayMsg,
     },
     state::{
-        Config, CreditLine, InvestorToken, PoolSlice, TranchePool, CONFIG, CREDIT_LINES, KYC,
-        KYC_CONTRACT, POOL_SLICES, SENIOR_POOLS, TRANCHE_POOLS, USDC, WHITELISTED_TOKENS,
+        Config, CreditLine, InvestorToken, TranchePool, CONFIG, CREDIT_LINES, POOL_SLICES,
+        SENIOR_POOLS, TRANCHE_POOLS, WHITELISTED_TOKENS,
     },
 };
 
@@ -94,10 +96,6 @@ pub fn create_pool(
     info: MessageInfo,
     msg: CreatePoolMsg,
 ) -> ContractResult<Response> {
-    // !-------
-    // necessary validations
-    // -------!
-    // - verify all `msg` parameters
     let borrower = deps.api.addr_validate(&msg.borrower)?;
     let mut config = CONFIG.load(deps.as_ref().storage)?;
     if info.sender != borrower && info.sender != config.admin {
@@ -248,28 +246,108 @@ pub fn drawdown(
     info: MessageInfo,
     msg: DrawdownMsg,
 ) -> ContractResult<Response> {
-    if !has_kyc(deps.as_ref(), info.sender.clone())? {
-        return Err(ContractError::CustomError {
-            msg: "non-KYC user".to_string(),
-        });
-    }
-    // load pool info
-    let mut pool = load_pool(deps.as_ref(), msg.pool_id)?;
-    // assert amount < available limit
-    // assert msg.sender == borrower
-    // assert no default
+    ensure_drawdown_unpaused(deps.as_ref())?;
+    ensure_kyc(deps.as_ref(), info.sender.clone())?;
+
+    let pool = load_pool(deps.as_ref(), msg.pool_id)?;
     if info.sender != pool.borrower_addr {
         return Err(ContractError::Unauthorized {});
     }
-    pool.drawdown(msg.amount, &env)?;
-    TRANCHE_POOLS.save(deps.storage, msg.pool_id, &pool)?;
-    // transfer amount to user
-    let usdc_denom = USDC.load(deps.storage)?;
+
+    let mut slices = POOL_SLICES.load(deps.storage, msg.pool_id)?;
+    if slices.is_empty() {
+        return Err(ContractError::CustomError {
+            msg: "Tranches not initialized".to_string(),
+        });
+    }
+    if !slices[slices.len() - 1].is_locked() {
+        return Err(ContractError::CustomError {
+            msg: "Pool not locked".to_string(),
+        });
+    }
+
+    let top_slice = &mut slices[slices.len() - 1];
+    let mut tranche_funds = share_price_to_usdc(
+        top_slice.junior_tranche.principal_share_price,
+        top_slice.junior_tranche.principal_deposited,
+    )?;
+    tranche_funds = tranche_funds.checked_add(share_price_to_usdc(
+        top_slice.senior_tranche.principal_share_price,
+        top_slice.senior_tranche.principal_deposited,
+    )?)?;
+
+    if msg.amount > tranche_funds {
+        return Err(ContractError::DrawdownExceedsLimit {
+            limit: tranche_funds,
+        });
+    }
+
+    // drawdown in creditline
+    // update share price in both tranches
+    let remaining_amount = tranche_funds.checked_sub(msg.amount)?;
+    top_slice.junior_tranche.principal_share_price = top_slice
+        .junior_tranche
+        .expected_share_price(remaining_amount, &top_slice)?;
+    top_slice.senior_tranche.principal_share_price = top_slice
+        .senior_tranche
+        .expected_share_price(remaining_amount, &top_slice)?;
+    top_slice.principal_deployed = top_slice.principal_deployed.checked_add(msg.amount)?;
+
     let msg = CosmosMsg::Bank(BankMsg::Send {
         to_address: info.sender.to_string(),
-        amount: coins(msg.amount.u128(), usdc_denom),
+        amount: coins(msg.amount.u128(), pool.denom.clone()),
     });
     Ok(Response::new().add_message(msg))
+}
+
+pub fn lock_pool(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    msg: LockPoolMsg,
+) -> ContractResult<Response> {
+    let mut slices = POOL_SLICES.load(deps.storage, msg.pool_id)?;
+    if slices.is_empty() {
+        return Ok(Response::default());
+    }
+    let top_slice = &mut slices[slices.len() - 1];
+    if top_slice.junior_tranche.locked_until == Timestamp::default() {
+        return Err(ContractError::CustomError {
+            msg: "Junior tranche not locked".to_string(),
+        });
+    }
+    if top_slice.senior_tranche.locked_until != Timestamp::default() {
+        return Err(ContractError::CustomError {
+            msg: "Tranche already locked".to_string(),
+        });
+    }
+
+    let tranche_deposit = top_slice
+        .junior_tranche
+        .principal_deposited
+        .checked_add(top_slice.senior_tranche.principal_deposited)?;
+
+    let mut credit_line = CREDIT_LINES.load(deps.storage, msg.pool_id)?;
+    credit_line.set_limit(std::cmp::min(
+        credit_line.limit(&env)?.checked_add(tranche_deposit)?,
+        credit_line.max_limit(),
+    ))?;
+    CREDIT_LINES.save(deps.storage, msg.pool_id, &credit_line)?;
+
+    // lock tranches
+    top_slice
+        .junior_tranche
+        .lock_tranche(&env, credit_line.drawdown_period);
+    top_slice
+        .senior_tranche
+        .lock_tranche(&env, credit_line.drawdown_period);
+    POOL_SLICES.save(deps.storage, msg.pool_id, &slices)?;
+
+    Ok(Response::new()
+        .add_attribute("method", "lock_pool")
+        .add_attribute("pool_id", msg.pool_id.to_string())
+        .add_attribute("junior_tranche", top_slice.junior_tranche.id.to_string())
+        .add_attribute("senior_tranche", top_slice.senior_tranche.id.to_string()))
 }
 
 pub fn repay(
@@ -278,11 +356,7 @@ pub fn repay(
     info: MessageInfo,
     msg: RepayMsg,
 ) -> ContractResult<Response> {
-    if !has_kyc(deps.as_ref(), info.sender.clone())? {
-        return Err(ContractError::CustomError {
-            msg: "non-KYC user".to_string(),
-        });
-    }
+    ensure_kyc(deps.as_ref(), info.sender.clone())?;
     if info.funds.is_empty() || info.funds[0].amount.is_zero() {
         return Err(ContractError::EmptyFunds);
     } else if info.funds.len() > 1 {

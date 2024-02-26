@@ -36,6 +36,7 @@ pub enum PoolStatus {
 #[cw_serde]
 #[derive(Default)]
 pub struct BorrowInfo {
+    pub current_limit: Uint128,
     pub borrow_limit: Uint128,
     pub total_borrowed: Uint128,
     pub borrowed_amount: Uint128,
@@ -63,16 +64,17 @@ pub struct PoolSlice {
 }
 
 #[cw_serde]
-#[derive(Default)]
 pub struct CreditLine {
     /// Prior this date, no interest is charged
-    pub term_start: Option<Timestamp>,
+    pub term_start: Timestamp,
     /// Post this date, all accrued interest is due
-    pub term_end: Option<Timestamp>,
+    pub term_end: Timestamp,
+    pub term_length: u64,
     /// Grace period post due date
     pub grace_period: u64,
     /// Initial grace period for principal repayment
     pub principal_grace_period: u64,
+    pub drawdown_period: u64,
     pub borrow_info: BorrowInfo,
     /// 12.50% interest is represented as 1250
     pub interest_apr: u16,
@@ -125,13 +127,13 @@ pub struct ACI {
     pub pool_auth: u64,
 }
 
-pub const KYC_CONTRACT: Item<Addr> = Item::new("kyc_contract");
 pub const CONFIG: Item<Config> = Item::new("pool_config");
+pub const KYC_CONTRACT: Item<Addr> = Item::new("kyc_contract");
 pub const TRANCHE_POOLS: Map<u64, TranchePool> = Map::new("tranche_pools");
 pub const CREDIT_LINES: Map<u64, CreditLine> = Map::new("credit_lines");
 pub const POOL_SLICES: Map<u64, Vec<PoolSlice>> = Map::new("pool_slices");
 pub const BORROWERS: Map<Addr, ACI> = Map::new("borrowers");
 pub const WHITELISTED_TOKENS: Map<String, bool> = Map::new("whitelisted_tokens");
-pub const KYC: Map<Addr, bool> = Map::new("user_kyc");
 pub const RESERVES: Item<Uint128> = Item::new("reserves");
 pub const SENIOR_POOLS: Map<String, Addr> = Map::new("senior_pools");
+pub const PAUSED: Item<bool> = Item::new("drawdown_pause");

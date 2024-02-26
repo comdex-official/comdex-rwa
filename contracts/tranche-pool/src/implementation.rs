@@ -1,8 +1,8 @@
-use cosmwasm_std::{Decimal, Timestamp, Uint128};
+use cosmwasm_std::{Decimal, Env, Timestamp, Uint128};
 
 use crate::{
     error::ContractResult,
-    helpers::usdc_to_share_price,
+    helpers::{usdc_to_share_price, scale_by_fraction},
     state::{PoolSlice, TrancheInfo},
 };
 
@@ -27,6 +27,10 @@ impl PoolSlice {
             principal_deployed: 0u128.into(),
         })
     }
+
+    pub fn is_locked(&self) -> bool {
+        self.senior_tranche.locked_until != Timestamp::default()
+    }
 }
 
 impl TrancheInfo {
@@ -36,5 +40,31 @@ impl TrancheInfo {
         } else {
             false
         }
+    }
+
+    pub fn lock_tranche(&mut self, env: &Env, drawdown_period: u64) -> ContractResult<()> {
+        self.locked_until = env.block.time.plus_seconds(drawdown_period);
+        Ok(())
+    }
+
+    pub fn expected_share_price(
+        &self,
+        amount: Uint128,
+        slice: &PoolSlice,
+    ) -> ContractResult<Decimal> {
+        let share_price = usdc_to_share_price(amount, self.principal_deposited)?;
+        self.scale_by_percent_ownership(share_price, slice)
+    }
+
+    pub fn scale_by_percent_ownership(
+        &self,
+        share_price: Decimal,
+        slice: &PoolSlice,
+    ) -> ContractResult<Decimal> {
+        let total_deposited = slice
+            .junior_tranche
+            .principal_deposited
+            .checked_add(slice.senior_tranche.principal_deposited)?;
+        scale_by_fraction(share_price, self.principal_deposited, total_deposited)
     }
 }

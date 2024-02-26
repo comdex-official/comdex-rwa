@@ -1,7 +1,7 @@
 use cosmwasm_std::{to_json_binary, Addr, Decimal, Deps, DepsMut, MessageInfo, Uint128, WasmQuery};
 
 use crate::error::{ContractError, ContractResult};
-use crate::state::TrancheInfo;
+use crate::state::{TrancheInfo, PAUSED};
 use crate::{
     msg::CreatePoolMsg,
     state::{PoolSlice, CONFIG, KYC_CONTRACT, POOL_SLICES, WHITELISTED_TOKENS},
@@ -12,10 +12,25 @@ use rwa_core::{
     state::{ContactInfo, KYCStatus},
 };
 
-pub fn get_tranche_info<'a>(
+pub const SCALING_FACTOR: u128 = 1_000_000_000_000_000_000u128;
+
+pub fn is_drawdown_paused(deps: Deps) -> ContractResult<bool> {
+    Ok(PAUSED.may_load(deps.storage)?.unwrap_or_default())
+}
+
+pub fn ensure_drawdown_unpaused(deps: Deps) -> ContractResult<()> {
+    if is_drawdown_paused(deps)? {
+        return Err(ContractError::CustomError {
+            msg: "Drawdowns have been paused".to_string(),
+        });
+    }
+    Ok(())
+}
+
+pub fn get_tranche_info(
     tranche_id: u64,
-    slices: &'a mut Vec<PoolSlice>,
-) -> ContractResult<&'a mut TrancheInfo> {
+    slices: &mut Vec<PoolSlice>,
+) -> ContractResult<&mut TrancheInfo> {
     let slice_index = tranche_id as usize / 2;
     if slice_index >= slices.len() {
         return Err(ContractError::CustomError {
@@ -83,7 +98,9 @@ pub fn has_kyc(deps: Deps, user: Addr) -> ContractResult<bool> {
 
 pub fn usdc_to_share_price(amount: Uint128, total_shares: Uint128) -> ContractResult<Decimal> {
     Ok(Decimal::new(
-        amount.checked_div(total_shares).unwrap_or_default(),
+        amount
+            .checked_mul(SCALING_FACTOR.into())?
+            .checked_div(total_shares)?,
     ))
 }
 
@@ -93,12 +110,29 @@ pub fn share_price_to_usdc(share_price: Decimal, total_shares: Uint128) -> Contr
         .to_uint_floor())
 }
 
+pub fn scale_by_fraction(share_price: Decimal, numerator: Uint128, denominator: Uint128) -> ContractResult<Decimal> {
+    let numerator_decimal = Decimal::new(numerator);
+    let denominator_decimal = Decimal::new(denominator);
+    Ok(numerator_decimal.checked_div(denominator_decimal)?.checked_mul(share_price)?)
+}
+
 pub fn initialize_next_slice(deps: DepsMut, pool_id: u64) -> ContractResult<()> {
     let updated_slices = match POOL_SLICES.may_load(deps.storage, pool_id)? {
         Some(mut slices) => {
             if slices.len() >= 5 {
                 return Err(ContractError::MaxSliceLimit);
             };
+            if slices[slices.len() - 1].is_locked() {
+                return Err(ContractError::CustomError {
+                    msg: "All previous slices should be locked".to_string(),
+                });
+            }
+            // !-------
+            // Check for late payment
+            // -------!
+            // !-------
+            // Should be within principal grace period
+            // -------!
             slices.push(PoolSlice::new(slices.len() as u64)?);
             slices
         }
