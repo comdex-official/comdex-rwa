@@ -2,7 +2,7 @@ use cosmwasm_std::{Env, Timestamp, Uint128};
 
 use crate::error::{ContractError, ContractResult};
 use crate::helpers::share_price_to_usdc;
-use crate::state::{BorrowInfo, CreditLine, LendInfo, PaymentFrequency};
+use crate::state::{BorrowInfo, CreditLine, LendInfo, PaymentFrequency, RepaymentInfo};
 use crate::{SIY, TEN_THOUSAND};
 
 impl CreditLine {
@@ -221,7 +221,8 @@ impl CreditLine {
             return Ok(Uint128::zero());
         }
         let past_interest = self.interest_accrued;
-        let latest_interest = self.interest_over_period(self.last_update_ts, env.block.time)?;
+        let latest_interest =
+            self.interest_over_period(self.last_update_ts, env.block.time, env)?;
 
         Ok(past_interest + latest_interest)
     }
@@ -230,6 +231,7 @@ impl CreditLine {
         &self,
         begin: Timestamp,
         end: Timestamp,
+        env: &Env,
     ) -> ContractResult<Uint128> {
         if end < begin {
             return Err(ContractError::CustomError {
@@ -248,8 +250,33 @@ impl CreditLine {
         // !-------
         // calculate late fee
         // -------!
+        let late_fee = self.late_fee_accrued_over_period(begin, end, env)?;
 
-        Ok(interest)
+        Ok(interest + late_fee)
+    }
+
+    pub fn late_fee_accrued_over_period(
+        &self,
+        begin: Timestamp,
+        end: Timestamp,
+        env: &Env,
+    ) -> ContractResult<Uint128> {
+        let mut _env = env.to_owned();
+        _env.block.time = self.last_full_payment;
+        let oldest_unpaid_date = self.next_due_date(&_env)?;
+        let late_fee_start =
+            std::cmp::max(begin, oldest_unpaid_date.plus_seconds(self.grace_period));
+
+        if late_fee_start > end {
+            return Ok(Uint128::zero());
+        }
+        let period = end.seconds() - late_fee_start.seconds();
+        Ok(self
+            .borrow_info
+            .borrowed_amount
+            .checked_mul(Uint128::new(self.late_fee_apr as u128))?
+            .checked_div(SIY)?
+            .checked_mul(Uint128::new(period as u128))?)
     }
 
     pub fn _interest_owed(&self, env: &Env) -> ContractResult<Uint128> {
@@ -261,13 +288,13 @@ impl CreditLine {
         }
         if env.block.time > self.term_end {
             return Ok(self.interest_accrued
-                + self.interest_over_period(self.last_update_ts, env.block.time)?);
+                + self.interest_over_period(self.last_update_ts, env.block.time, env)?);
         }
         let prev_interest_due_date = self.prev_interest_due_date(env)?;
         if self.last_update_ts <= prev_interest_due_date && prev_interest_due_date <= env.block.time
         {
             return Ok(self.interest_accrued
-                + self.interest_over_period(self.last_update_ts, env.block.time)?);
+                + self.interest_over_period(self.last_update_ts, env.block.time, env)?);
         }
         Ok(self.interest_owed)
     }
@@ -331,48 +358,44 @@ impl CreditLine {
         Ok(self.borrow_info.borrowed_amount.u128() > 0u128 && env.block.time > next_due_date)
     }
 
-    pub fn repay(
-        &mut self,
-        repay_interest: Uint128,
-        repay_principal: Uint128,
-        env: &Env,
-    ) -> ContractResult<(Uint128, Uint128)> {
-        if repay_interest == Uint128::zero() && repay_principal == Uint128::zero() {
+    pub fn repay(&mut self, mut amount: Uint128, env: &Env) -> ContractResult<RepaymentInfo> {
+        if amount.is_zero() {
             return Err(ContractError::CustomError {
                 msg: "repayment amount is zero".to_string(),
             });
         }
+        let mut repayment_info = RepaymentInfo::default();
         self.checkpoint(env)?;
         // repay principal and interest
         let current_interest_owed = self.interest_owed(env)?;
         let current_principal_owed = self.principal_owed(env)?;
-        let interest_pending = Uint128::zero();
-        let principal_pending = Uint128::zero();
-        if repay_interest >= current_interest_owed {
+        if amount >= current_interest_owed {
             self.borrow_info
                 .interest_repaid
                 .checked_add(current_interest_owed)?;
+            repayment_info.interest_repaid = current_interest_owed;
+            amount -= current_interest_owed;
         } else {
-            self.borrow_info
-                .interest_repaid
-                .checked_add(repay_interest)?;
-            interest_pending.checked_add(current_interest_owed - repay_interest)?;
+            self.borrow_info.interest_repaid.checked_add(amount)?;
+            repayment_info.interest_repaid = amount;
+            repayment_info.interest_pending = current_interest_owed - amount;
         }
-        if repay_principal >= current_principal_owed {
+        if amount >= current_principal_owed {
             self.borrow_info
                 .principal_repaid
                 .checked_add(current_interest_owed)?;
+            repayment_info.principal_repaid = current_principal_owed;
+            amount -= current_principal_owed;
         } else {
-            self.borrow_info
-                .principal_repaid
-                .checked_add(repay_principal)?;
-            principal_pending.checked_add(current_principal_owed - repay_principal)?;
+            self.borrow_info.principal_repaid.checked_add(amount)?;
+            repayment_info.principal_repaid = amount;
+            repayment_info.principal_pending = current_principal_owed - amount;
         }
         // if both owed amounts in now zero, update last_full_payment
-        if interest_pending == Uint128::zero() && principal_pending == Uint128::zero() {
+        if repayment_info.interest_pending.is_zero() && repayment_info.principal_pending.is_zero() {
             self.last_full_payment = env.block.time;
         }
-        Ok((interest_pending, principal_pending))
+        Ok(repayment_info)
     }
 
     pub fn redeemable_interest_and_amount(

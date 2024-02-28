@@ -1,4 +1,4 @@
-use cosmwasm_std::{StdError, Uint128, OverflowError, DivideByZeroError, CheckedFromRatioError};
+use cosmwasm_std::{StdError, Uint128, OverflowError, DivideByZeroError, CheckedFromRatioError, DecimalRangeExceeded};
 use thiserror::Error;
 
 pub type ContractResult<T> = Result<T, ContractError>;
@@ -16,6 +16,9 @@ pub enum ContractError {
 
     #[error("{0}")]
     CheckedFromRatioError(#[from] CheckedFromRatioError),
+
+    #[error("{0}")]
+    DecimalRangeExceeded(#[from] DecimalRangeExceeded),
 
     #[error("Invalid address: {address}")]
     InvalidAdmin { address: String },

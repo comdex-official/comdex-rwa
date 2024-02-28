@@ -12,6 +12,7 @@ use rwa_core::{
     state::{ContactInfo, KYCStatus},
 };
 
+// 1e18
 pub const SCALING_FACTOR: u128 = 1_000_000_000_000_000_000u128;
 
 pub fn is_drawdown_paused(deps: Deps) -> ContractResult<bool> {
@@ -50,6 +51,41 @@ pub fn validate_create_pool_msg(
     msg: &CreatePoolMsg,
 ) -> ContractResult<()> {
     ensure_whitelisted_denom(deps, msg.denom.clone())?;
+    if msg.pool_name.is_empty() {
+        return Err(ContractError::CustomError {
+            msg: "Pool name cannot be empty".to_string(),
+        });
+    }
+    if msg.borrower_name.is_empty() {
+        return Err(ContractError::CustomError {
+            msg: "Borrower name cannot be empty".to_string(),
+        });
+    }
+    if msg.junior_fee_percent > 10000 {
+        return Err(ContractError::CustomError {
+            msg: "junior fee percent cannot be greater than 100%".to_string(),
+        });
+    }
+    if msg.borrow_limit.is_zero() {
+        return Err(ContractError::CustomError {
+            msg: "Borrow limit should be non-zero".to_string(),
+        });
+    }
+    if msg.term_length == 0 {
+        return Err(ContractError::CustomError {
+            msg: "Term length should be non-zero".to_string(),
+        });
+    }
+    if msg.term_length % msg.interest_frequency.to_seconds() != 0 {
+        return Err(ContractError::CustomError {
+            msg: "Term should be divisible by interest frequency".to_string(),
+        });
+    }
+    if msg.term_length % msg.principal_frequency.to_seconds() != 0 {
+        return Err(ContractError::CustomError {
+            msg: "Term should be divisible by principal frequency".to_string(),
+        });
+    }
     Ok(())
 }
 
@@ -110,10 +146,16 @@ pub fn share_price_to_usdc(share_price: Decimal, total_shares: Uint128) -> Contr
         .to_uint_floor())
 }
 
-pub fn scale_by_fraction(share_price: Decimal, numerator: Uint128, denominator: Uint128) -> ContractResult<Decimal> {
+pub fn scale_by_fraction(
+    share_price: Decimal,
+    numerator: Uint128,
+    denominator: Uint128,
+) -> ContractResult<Decimal> {
     let numerator_decimal = Decimal::new(numerator);
     let denominator_decimal = Decimal::new(denominator);
-    Ok(numerator_decimal.checked_div(denominator_decimal)?.checked_mul(share_price)?)
+    Ok(numerator_decimal
+        .checked_div(denominator_decimal)?
+        .checked_mul(share_price)?)
 }
 
 pub fn initialize_next_slice(deps: DepsMut, pool_id: u64) -> ContractResult<()> {

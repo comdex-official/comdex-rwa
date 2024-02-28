@@ -4,8 +4,8 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    coins, to_json_binary, Addr, BankMsg, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
-    Response, StdError, Timestamp, Uint128, WasmMsg, WasmQuery,
+    coins, to_json_binary, BankMsg, CosmosMsg, Decimal, Deps, DepsMut, Empty, Env, MessageInfo,
+    Response, StdError, Timestamp, Uint128, WasmMsg,
 };
 
 use cw2::set_contract_version;
@@ -14,8 +14,8 @@ use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721Intantiat
 use crate::{
     error::{ContractError, ContractResult},
     helpers::{
-        ensure_drawdown_unpaused, ensure_empty_funds, ensure_kyc, ensure_whitelisted_denom,
-        get_grace_period, get_tranche_info, initialize_next_slice, is_backer, share_price_to_usdc,
+        ensure_drawdown_unpaused, ensure_empty_funds, ensure_kyc, get_grace_period,
+        get_tranche_info, initialize_next_slice, scale_by_fraction, share_price_to_usdc,
         validate_create_pool_msg,
     },
     msg::{
@@ -151,6 +151,7 @@ pub fn create_pool(
 
     TRANCHE_POOLS.save(deps.storage, tranche_pool.pool_id, &tranche_pool)?;
     CREDIT_LINES.save(deps.storage, tranche_pool.pool_id, &credit_line)?;
+    CONFIG.save(deps.storage, &config)?;
 
     Ok(Response::new()
         .add_attribute("method", "create_pool")
@@ -179,9 +180,7 @@ pub fn deposit(
         });
     }
 
-    let pool = TRANCHE_POOLS
-        .load(deps.storage, msg.pool_id)
-        .map_err(|_| ContractError::InvalidPoolId { id: msg.pool_id })?;
+    let pool = load_pool(deps.as_ref(), msg.pool_id)?;
     if pool.denom != info.funds[0].denom {
         return Err(ContractError::CustomError {
             msg: "Incorrect denom for deposit".to_string(),
@@ -283,6 +282,10 @@ pub fn drawdown(
     }
 
     // drawdown in creditline
+    let mut credit_line = CREDIT_LINES.load(deps.storage, msg.pool_id)?;
+    credit_line.drawdown(msg.amount, &env)?;
+    CREDIT_LINES.save(deps.storage, msg.pool_id, &credit_line)?;
+
     // update share price in both tranches
     let remaining_amount = tranche_funds.checked_sub(msg.amount)?;
     top_slice.junior_tranche.principal_share_price = top_slice
@@ -357,7 +360,7 @@ pub fn repay(
     msg: RepayMsg,
 ) -> ContractResult<Response> {
     ensure_kyc(deps.as_ref(), info.sender.clone())?;
-    if info.funds.is_empty() || info.funds[0].amount.is_zero() {
+    if info.funds.is_empty() || info.funds[0].amount.is_zero() || msg.amount.is_zero() {
         return Err(ContractError::EmptyFunds);
     } else if info.funds.len() > 1 {
         return Err(ContractError::MultipleTokens);
@@ -368,24 +371,75 @@ pub fn repay(
             sent: info.funds[0].amount,
         });
     }
-    let usdc_denom = USDC.load(deps.storage)?;
-    if info.funds[0].denom != usdc_denom {
+    let pool = load_pool(deps.as_ref(), msg.pool_id)?;
+    if info.funds[0].denom != pool.denom {
         return Err(ContractError::CustomError {
-            msg: "Not USDC".to_string(),
+            msg: "Incorrect denom used for repayment".to_string(),
         });
     }
-    let mut pool = load_pool(deps.as_ref(), msg.pool_id)?;
-    let mut amount = msg.amount;
-    let (pending_interest, pending_principal) = pool.repay(&mut amount, &env)?;
-    TRANCHE_POOLS.save(deps.storage, msg.pool_id, &pool)?;
+    if info.sender != pool.borrower_addr {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let mut credit_line = CREDIT_LINES.load(deps.as_ref().storage, msg.pool_id)?;
+    let repayment_info = credit_line.repay(msg.amount, &env)?;
+    CREDIT_LINES.save(deps.storage, msg.pool_id, &credit_line)?;
+    let interest_accrued = repayment_info.interest_repaid + repayment_info.interest_pending;
+
+    let cosmos_msg;
+    if repayment_info.excess_amount.is_zero() {
+        cosmos_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: info.sender.into_string(),
+            amount: coins(repayment_info.excess_amount.u128(), info.funds[0].denom),
+        });
+    }
 
     // !-------
-    // Handle pending_payments
+    // Update all slices
     // -------!
+    let mut slices = POOL_SLICES.load(deps.as_ref().storage, msg.pool_id)?;
+    let mut principal_payment_per_slice = Vec::<Uint128>::with_capacity(slices.len());
+    for slice in slices.iter_mut() {
+        let interest_for_slice = scale_by_fraction(
+            Decimal::from_atomics(interest_accrued, 0)?,
+            slice.principal_deployed,
+            credit_line.borrow_info.borrowed_amount,
+        )?;
+        slice.total_interest_accrued += interest_for_slice.to_uint_floor();
+        principal_payment_per_slice.push(
+            scale_by_fraction(
+                Decimal::from_atomics(repayment_info.principal_repaid, 0)?,
+                slice.principal_deployed,
+                credit_line.borrow_info.borrowed_amount,
+            )?
+            .to_uint_floor(),
+        );
+    }
+
+    if !repayment_info.interest_repaid.is_zero() || !repayment_info.principal_repaid.is_zero() {
+        // collect interest and principal and send to reserve
+    }
 
     Ok(Response::new()
-        .add_attribute("pending_interest", pending_interest)
-        .add_attribute("pending_principal", pending_principal))
+        .add_attribute("method", "repay")
+        .add_attribute("borrower", info.sender.to_string())
+        .add_attribute(
+            "interest_repaid",
+            repayment_info.interest_repaid.to_string(),
+        )
+        .add_attribute(
+            "principal_repaid",
+            repayment_info.principal_repaid.to_string(),
+        )
+        .add_attribute(
+            "interest_pending",
+            repayment_info.interest_pending.to_string(),
+        )
+        .add_attribute(
+            "principal_pending",
+            repayment_info.principal_pending.to_string(),
+        )
+        .add_message(cosmos_msg))
 }
 
 pub fn load_pool(deps: Deps, pool_id: u64) -> ContractResult<TranchePool> {

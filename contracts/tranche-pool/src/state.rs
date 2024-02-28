@@ -127,6 +127,15 @@ pub struct ACI {
     pub pool_auth: u64,
 }
 
+#[derive(Default)]
+pub struct RepaymentInfo {
+    pub principal_repaid: Uint128,
+    pub interest_repaid: Uint128,
+    pub principal_pending: Uint128,
+    pub interest_pending: Uint128,
+    pub excess_amount: Uint128,
+}
+
 pub const CONFIG: Item<Config> = Item::new("pool_config");
 pub const KYC_CONTRACT: Item<Addr> = Item::new("kyc_contract");
 pub const TRANCHE_POOLS: Map<u64, TranchePool> = Map::new("tranche_pools");
