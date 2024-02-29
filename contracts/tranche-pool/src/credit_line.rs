@@ -247,9 +247,6 @@ impl CreditLine {
             .checked_mul(Uint128::from(self.interest_apr))?
             .checked_div(SIY)?
             .checked_mul(Uint128::from(period))?;
-        // !-------
-        // calculate late fee
-        // -------!
         let late_fee = self.late_fee_accrued_over_period(begin, end, env)?;
 
         Ok(interest + late_fee)

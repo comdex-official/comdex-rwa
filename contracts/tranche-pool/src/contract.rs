@@ -23,8 +23,8 @@ use crate::{
         MigrateMsg, RepayMsg,
     },
     state::{
-        Config, CreditLine, InvestorToken, TranchePool, CONFIG, CREDIT_LINES, POOL_SLICES,
-        SENIOR_POOLS, TRANCHE_POOLS, WHITELISTED_TOKENS,
+        Config, CreditLine, InvestorToken, PoolSlice, TranchePool, CONFIG, CREDIT_LINES,
+        POOL_SLICES, SENIOR_POOLS, TRANCHE_POOLS, WHITELISTED_TOKENS,
     },
 };
 
@@ -416,8 +416,14 @@ pub fn repay(
         );
     }
 
+    let mut reserve_amount = Uint128::zero();
     if !repayment_info.interest_repaid.is_zero() || !repayment_info.principal_repaid.is_zero() {
         // collect interest and principal and send to reserve
+        reserve_amount = collect_interest_and_principal(
+            &mut slices,
+            repayment_info.interest_repaid,
+            repayment_info.principal_repaid,
+        )?;
     }
 
     Ok(Response::new()
@@ -440,6 +446,14 @@ pub fn repay(
             repayment_info.principal_pending.to_string(),
         )
         .add_message(cosmos_msg))
+}
+
+pub fn collect_interest_and_principal(
+    slices: &mut Vec<PoolSlice>,
+    interest: Uint128,
+    principal: Uint128,
+) -> ContractResult<Uint128> {
+    Ok(Uint128::zero())
 }
 
 pub fn load_pool(deps: Deps, pool_id: u64) -> ContractResult<TranchePool> {

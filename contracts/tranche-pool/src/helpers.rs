@@ -1,7 +1,9 @@
-use cosmwasm_std::{to_json_binary, Addr, Decimal, Deps, DepsMut, MessageInfo, Uint128, WasmQuery};
+use cosmwasm_std::{
+    to_json_binary, Addr, Decimal, Deps, DepsMut, Env, MessageInfo, Uint128, WasmQuery,
+};
 
 use crate::error::{ContractError, ContractResult};
-use crate::state::{TrancheInfo, PAUSED};
+use crate::state::{CreditLine, TrancheInfo, PAUSED};
 use crate::{
     msg::CreatePoolMsg,
     state::{PoolSlice, CONFIG, KYC_CONTRACT, POOL_SLICES, WHITELISTED_TOKENS},
@@ -14,6 +16,83 @@ use rwa_core::{
 
 // 1e18
 pub const SCALING_FACTOR: u128 = 1_000_000_000_000_000_000u128;
+
+pub fn apply_to_all_slices(
+    slices: &mut Vec<PoolSlice>,
+    interest: Uint128,
+    principal: Uint128,
+    reserve_fee: u16,
+    total_deployed: Uint128,
+    junior_fee_percent: u16,
+    credit_line: &CreditLine,
+    env: &Env,
+) -> ContractResult<Uint128> {
+    // apply to senior tranches
+    let reserve_amount = apply_to_senior_tranches(
+        slices,
+        interest,
+        principal,
+        reserve_fee,
+        total_deployed,
+        junior_fee_percent,
+        credit_line,
+        env,
+    )?;
+    // apply to junior tranches
+
+    Ok(Uint128::zero())
+}
+
+pub fn apply_to_senior_tranches(
+    slices: &mut Vec<PoolSlice>,
+    interest: Uint128,
+    principal: Uint128,
+    reserve_fee: u16,
+    total_deployed: Uint128,
+    junior_fee_percent: u16,
+    credit_line: &CreditLine,
+    env: &Env,
+) -> ContractResult<Uint128> {
+    let mut principal_owed = credit_line.principal_owed(env)?;
+    principal_owed = principal_owed.checked_add(
+        credit_line
+            .borrow_info
+            .total_borrowed
+            .checked_sub(credit_line.borrow_info.borrowed_amount)?,
+    )?;
+    for slice in slices.iter_mut() {
+        let mut principal_accrued = scale_for_slice(slice, principal_owed, total_deployed)?;
+        let total_deposited = slice
+            .senior_tranche
+            .principal_deposited
+            .checked_add(slice.junior_tranche.principal_deposited)?;
+        principal_accrued = total_deposited
+            .checked_sub(slice.principal_deployed)?
+            .checked_add(principal_accrued)?;
+        // apply to senior tranche
+        slice.apply_to_senior_tranche(
+            scale_for_slice(slice, interest, total_deployed)?,
+            scale_for_slice(slice, principal, total_deployed)?,
+            junior_fee_percent,
+            _,
+            _,
+        )?;
+    }
+    Ok(Uint128::zero())
+}
+
+pub fn scale_for_slice(
+    slice: &PoolSlice,
+    amount: Uint128,
+    total_deployed: Uint128,
+) -> ContractResult<Uint128> {
+    Ok(scale_by_fraction(
+        Decimal::from_atomics(amount, 0)?,
+        slice.principal_deployed,
+        total_deployed,
+    )?
+    .to_uint_floor())
+}
 
 pub fn is_drawdown_paused(deps: Deps) -> ContractResult<bool> {
     Ok(PAUSED.may_load(deps.storage)?.unwrap_or_default())
