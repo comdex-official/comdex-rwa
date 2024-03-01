@@ -28,6 +28,7 @@ cw-storage-plus = "1.1.0"
 schemars = "0.8.15"
 serde = { version = "1.0.188", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.49" }
+cw721 = { path = "../../packages/cw721" }
 cw721-base = { path = "../cw721-base", version = "0.15.0", features = ["library"] }
 cw721-metadata-onchain = { path = "../cw721-metadata-onchain", features = ["library"] }
 rwa-core = { path = "../core", features=["library"] }

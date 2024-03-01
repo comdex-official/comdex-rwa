@@ -1,9 +1,13 @@
-use cosmwasm_std::{to_json_binary, Binary, Deps, Env, Order, StdResult};
+use cosmwasm_std::{
+    to_json_binary, Binary, Deps, Env, Order, QueryRequest, StdResult, Uint128, WasmQuery,
+};
+use cw721::NftInfoResponse;
+use cw721_metadata_onchain::{InvestorToken, QueryMsg as Cw721QueryMsg};
 use cw_storage_plus::Bound;
 
 use crate::{
     msg::QueryMsg,
-    state::{Config, TranchePool, CONFIG, KYC, TRANCHE_POOLS},
+    state::{Config, TranchePool, CONFIG, TRANCHE_POOLS},
 };
 
 const DEFAULT_LIMIT: u8 = 10;
@@ -14,7 +18,6 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::GetConfig {} => to_json_binary(&get_config(deps, env)?),
         QueryMsg::GetPoolInfo { id } => to_json_binary(&get_pool_info(deps, env, id)?),
-        QueryMsg::CheckKycStatus { user } => to_json_binary(&check_kyc_status(deps, env, user)?),
         QueryMsg::GetAllPools { start, limit } => {
             to_json_binary(&get_all_pools(deps, env, start, limit)?)
         }
@@ -47,8 +50,15 @@ pub fn get_all_pools(
     Ok(pools?)
 }
 
-pub fn check_kyc_status(deps: Deps, _env: Env, user: String) -> StdResult<bool> {
-    Ok(KYC
-        .load(deps.storage, deps.api.addr_validate(&user)?)
-        .unwrap_or(false))
+pub fn get_nft_info(deps: Deps, env: Env, token_id: u64) -> StdResult<InvestorToken> {
+    let config = get_config(deps.clone(), env.clone())?;
+    let query_msg = Cw721QueryMsg::NftInfo {
+        token_id: token_id.to_string(),
+    };
+    let nft_info: NftInfoResponse<InvestorToken> =
+        deps.querier.query(&QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: config.token_issuer.to_string(),
+            msg: to_json_binary(&query_msg)?,
+        }))?;
+    Ok(nft_info.extension)
 }

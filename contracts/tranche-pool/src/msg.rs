@@ -70,9 +70,6 @@ pub enum QueryMsg {
     GetPoolInfo {
         id: u64,
     },
-    CheckKycStatus {
-        user: String,
-    },
     GetAllPools {
         start: Option<u64>,
         limit: Option<u8>,

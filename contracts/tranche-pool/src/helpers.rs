@@ -47,7 +47,7 @@ pub fn apply_to_senior_tranches(
     slices: &mut Vec<PoolSlice>,
     interest: Uint128,
     principal: Uint128,
-    reserve_fee: u16,
+    reserve_fee_percent: u16,
     total_deployed: Uint128,
     junior_fee_percent: u16,
     credit_line: &CreditLine,
@@ -60,6 +60,8 @@ pub fn apply_to_senior_tranches(
             .total_borrowed
             .checked_sub(credit_line.borrow_info.borrowed_amount)?,
     )?;
+
+    let mut senior_reserve_deduction = Uint128::zero();
     for slice in slices.iter_mut() {
         let mut principal_accrued = scale_for_slice(slice, principal_owed, total_deployed)?;
         let total_deposited = slice
@@ -70,15 +72,58 @@ pub fn apply_to_senior_tranches(
             .checked_sub(slice.principal_deployed)?
             .checked_add(principal_accrued)?;
         // apply to senior tranche
-        slice.apply_to_senior_tranche(
+        let slice_reserve_deduction = slice.apply_to_senior_tranche(
             scale_for_slice(slice, interest, total_deployed)?,
             scale_for_slice(slice, principal, total_deployed)?,
             junior_fee_percent,
-            _,
-            _,
+            reserve_fee_percent,
+            principal_accrued,
         )?;
+        senior_reserve_deduction = senior_reserve_deduction.checked_add(slice_reserve_deduction)?;
     }
-    Ok(Uint128::zero())
+
+    let junior_reserve_deduction = apply_to_junior_tranches(
+        slices,
+        interest,
+        principal,
+        junior_fee_percent,
+        reserve_fee_percent,
+        total_deployed,
+        credit_line,
+        env,
+    )?;
+    Ok(senior_reserve_deduction.checked_add(junior_reserve_deduction)?)
+}
+
+pub fn apply_to_junior_tranches(
+    slices: &mut Vec<PoolSlice>,
+    interest: Uint128,
+    principal: Uint128,
+    junior_fee_percent: u16,
+    reserve_fee_percent: u16,
+    total_deployed: Uint128,
+    credit_line: &CreditLine,
+    env: &Env,
+) -> ContractResult<Uint128> {
+    let mut princial_owed = credit_line.principal_owed(env)?;
+    princial_owed = princial_owed.checked_add(
+        credit_line
+            .borrow_info
+            .total_borrowed
+            .checked_sub(credit_line.borrow_info.borrowed_amount)?,
+    )?;
+    let mut total_reserve_amount = Uint128::zero();
+    for slice in slices.iter_mut() {
+        let slice_reserve_deduction = slice.apply_to_junior_tranche(
+            scale_for_slice(&slice, interest, total_deployed)?,
+            scale_for_slice(&slice, principal, total_deployed)?,
+            junior_fee_percent,
+            reserve_fee_percent,
+            princial_owed,
+        )?;
+        total_reserve_amount = total_reserve_amount.checked_add(slice_reserve_deduction)?;
+    }
+    Ok(total_reserve_amount)
 }
 
 pub fn scale_for_slice(
@@ -92,6 +137,38 @@ pub fn scale_for_slice(
         total_deployed,
     )?
     .to_uint_floor())
+}
+
+pub fn apply_to_share_price(
+    amount_remaining: Uint128,
+    current_share_price: Decimal,
+    mut desired_amount: Uint128,
+    total_shares: Uint128,
+) -> ContractResult<(Uint128, Decimal)> {
+    if amount_remaining.is_zero() || desired_amount.is_zero() {
+        return Ok((amount_remaining, current_share_price));
+    }
+    if amount_remaining < desired_amount {
+        desired_amount = amount_remaining;
+    }
+    let share_price_diff = usdc_to_share_price(desired_amount, total_shares)?;
+    Ok((
+        amount_remaining.checked_sub(desired_amount)?,
+        current_share_price.checked_add(share_price_diff)?,
+    ))
+}
+
+pub fn desired_amount_from_share_price(
+    mut desired_share_price: Decimal,
+    actual_share_price: Decimal,
+    total_shares: Uint128,
+) -> ContractResult<Uint128> {
+    if desired_share_price < actual_share_price {
+        desired_share_price = actual_share_price;
+    }
+
+    let share_price_diff = desired_share_price.checked_sub(actual_share_price)?;
+    share_price_to_usdc(share_price_diff, total_shares)
 }
 
 pub fn is_drawdown_paused(deps: Deps) -> ContractResult<bool> {
