@@ -59,6 +59,9 @@ pub enum ContractError {
     #[error("Senior Pool contract not found for {denom}")]
     SeniorPoolNotFound {denom: String},
 
+    #[error("Withdrawals not allowed")]
+    LockedPoolWithdrawal,
+
     #[error("{msg}")]
     CustomError { msg: String }
 }

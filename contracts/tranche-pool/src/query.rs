@@ -1,7 +1,7 @@
 use cosmwasm_std::{
-    to_json_binary, Binary, Deps, Env, Order, QueryRequest, StdResult, Uint128, WasmQuery,
+    to_json_binary, Addr, Binary, Deps, Env, Order, QueryRequest, StdResult, Uint128, WasmQuery,
 };
-use cw721::NftInfoResponse;
+use cw721::{NftInfoResponse, OwnerOfResponse};
 use cw721_metadata_onchain::{InvestorToken, QueryMsg as Cw721QueryMsg};
 use cw_storage_plus::Bound;
 
@@ -48,6 +48,20 @@ pub fn get_all_pools(
         .collect();
 
     Ok(pools?)
+}
+
+pub fn get_nft_owner(deps: Deps, env: Env, token_id: u64) -> StdResult<Addr> {
+    let config = get_config(deps.clone(), env)?;
+    let query_msg = QueryRequest::Wasm(WasmQuery::Smart {
+        contract_addr: config.token_issuer.to_string(),
+        msg: to_json_binary(&Cw721QueryMsg::OwnerOf {
+            token_id: token_id.to_string(),
+            include_expired: None,
+        })?,
+    });
+
+    let result: OwnerOfResponse = deps.querier.query(&query_msg)?;
+    Ok(deps.api.addr_validate(&result.owner)?)
 }
 
 pub fn get_nft_info(deps: Deps, env: Env, token_id: u64) -> StdResult<InvestorToken> {

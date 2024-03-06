@@ -7,6 +7,8 @@ pub struct InstantiateMsg {
     pub admin: String,
     pub token_issuer: String,
     pub code_id: u64,
+    pub reserves_fee: u16,
+    pub reserves_addr: String,
 }
 
 #[cw_serde]
@@ -16,6 +18,8 @@ pub enum ExecuteMsg {
     Repay { msg: RepayMsg },
     Drawdown { msg: DrawdownMsg },
     AddBackers { backers: Vec<String> },
+    LockPool { msg: LockPoolMsg },
+    LockJuniorCapital { msg: LockJuniorCapitalMsg },
 }
 
 #[cw_serde]
@@ -59,9 +63,20 @@ pub struct LockPoolMsg {
 }
 
 #[cw_serde]
+pub struct LockJuniorCapitalMsg {
+    pub pool_id: u64,
+}
+
+#[cw_serde]
 pub struct RepayMsg {
     pub pool_id: u64,
     pub amount: Uint128,
+}
+
+#[cw_serde]
+pub struct WithdrawMsg {
+    pub token_id: u64,
+    pub amount: Option<Uint128>,
 }
 
 #[cw_serde]

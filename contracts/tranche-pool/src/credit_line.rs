@@ -395,22 +395,4 @@ impl CreditLine {
         Ok(repayment_info)
     }
 
-    pub fn redeemable_interest_and_amount(
-        &self,
-        lend_info: &LendInfo,
-    ) -> ContractResult<(Uint128, Uint128)> {
-        let max_principal_redeemable = share_price_to_usdc(
-            self.borrow_info.principal_share_price,
-            lend_info.principal_deposited,
-        )?;
-        let max_interest_redeemable = share_price_to_usdc(
-            self.borrow_info.interest_share_price,
-            lend_info.principal_deposited,
-        )?;
-        let redeemable_principal =
-            max_principal_redeemable.checked_sub(lend_info.principal_redeemed)?;
-        let redeemable_interest =
-            max_interest_redeemable.checked_sub(lend_info.interest_redeemed)?;
-        Ok((redeemable_interest, redeemable_principal))
-    }
 }

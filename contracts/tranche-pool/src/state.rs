@@ -11,6 +11,7 @@ pub struct Config {
     pub token_id: u128,
     pub admin: Addr,
     pub grace_period: Option<u64>,
+    pub reserve_fee: u16,
 }
 
 #[cw_serde]
@@ -143,6 +144,6 @@ pub const CREDIT_LINES: Map<u64, CreditLine> = Map::new("credit_lines");
 pub const POOL_SLICES: Map<u64, Vec<PoolSlice>> = Map::new("pool_slices");
 pub const BORROWERS: Map<Addr, ACI> = Map::new("borrowers");
 pub const WHITELISTED_TOKENS: Map<String, bool> = Map::new("whitelisted_tokens");
-pub const RESERVES: Item<Uint128> = Item::new("reserves");
+pub const RESERVE_ADDR: Item<Addr> = Item::new("reserves_addr");
 pub const SENIOR_POOLS: Map<String, Addr> = Map::new("senior_pools");
 pub const PAUSED: Item<bool> = Item::new("drawdown_pause");

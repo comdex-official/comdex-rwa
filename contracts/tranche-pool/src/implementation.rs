@@ -1,10 +1,11 @@
 use cosmwasm_std::{Decimal, Env, Timestamp, Uint128};
+use cw721_metadata_onchain::InvestorToken;
 
 use crate::{
     error::ContractResult,
     helpers::{
         apply_to_share_price, desired_amount_from_share_price, scale_by_fraction,
-        usdc_to_share_price,
+        share_price_to_usdc, usdc_to_share_price,
     },
     state::{PoolSlice, TrancheInfo},
 };
@@ -117,6 +118,25 @@ impl PoolSlice {
 }
 
 impl TrancheInfo {
+    pub fn redeemable_interest_and_amount(
+        &self,
+        investor_token: &InvestorToken,
+    ) -> ContractResult<(Uint128, Uint128)> {
+        let max_principal_redeemable = share_price_to_usdc(
+            self.principal_share_price,
+            investor_token.lend_info.principal_deposited,
+        )?;
+        let max_interest_redeemable = share_price_to_usdc(
+            self.interest_share_price,
+            investor_token.lend_info.principal_deposited,
+        )?;
+        let redeemable_principal =
+            max_principal_redeemable.checked_sub(investor_token.lend_info.principal_redeemed)?;
+        let redeemable_interest =
+            max_interest_redeemable.checked_sub(investor_token.lend_info.interest_redeemed)?;
+        Ok((redeemable_interest, redeemable_principal))
+    }
+
     pub fn is_senior_tranche(&self) -> bool {
         if self.id % 2 == 0 {
             true
