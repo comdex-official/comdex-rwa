@@ -1,7 +1,10 @@
 #![allow(unused_imports, unused_variables, dead_code)]
+mod msg;
+
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Empty, Uint128};
+use cosmwasm_std::{from_json, DepsMut, Empty, Env, MessageInfo, Response, StdError, Uint128};
 use cw2::set_contract_version;
+use cw721::NftInfoResponse;
 pub use cw721_base::{ContractError, InstantiateMsg, MigrateMsg, MintMsg, MinterResponse};
 
 // Version info for migration
@@ -29,26 +32,108 @@ impl Default for LendInfo {
 pub struct InvestorToken {
     pub token_id: u128,
     pub pool_id: u64,
+    pub tranche_id: u64,
     pub lend_info: LendInfo,
 }
 
 impl InvestorToken {
-    pub fn new(token_id: u128, pool_id: u64) -> Self {
+    pub fn new(token_id: u128, pool_id: u64, tranche_id: u64) -> Self {
         InvestorToken {
             token_id,
             pool_id,
+            tranche_id,
             lend_info: LendInfo::default(),
         }
     }
 }
 pub type Extension = Option<InvestorToken>;
 
-pub type Cw721MetadataContract<'a> =
-    cw721_base::Cw721Contract<'a, Extension, Empty, Empty, Empty, Empty>;
+//pub type Cw721MetadataContract<'a> =
+//cw721_base::Cw721Contract<'a, Extension, Empty, Empty, Empty, Empty>;
 pub type ExecuteMsg = cw721_base::ExecuteMsg<Extension, Empty>;
 pub type QueryMsg = cw721_base::QueryMsg<Empty>;
 
-#[cfg(not(feature = "library"))]
+#[derive(Default)]
+pub struct Cw721MetadataContract<'a> {
+    base: cw721_base::Cw721Contract<'a, Extension, Empty, Empty, Empty, Empty>,
+}
+
+impl<'a> Cw721MetadataContract<'a> {
+    pub fn withdraw_principal(
+        &self,
+        deps: DepsMut,
+        env: Env,
+        info: MessageInfo,
+        token_id: String,
+        principal_amount: Uint128,
+    ) -> Result<Response, ContractError> {
+        let minter = self.base.minter.load(deps.as_ref().storage)?;
+        if info.sender != minter {
+            return Err(ContractError::Unauthorized {});
+        }
+        let mut nft = self.base.tokens.load(deps.as_ref().storage, &token_id)?;
+        let investor_token = nft.extension.as_mut().unwrap();
+        if investor_token.lend_info.principal_deposited < principal_amount {
+            return Err(StdError::generic_err(
+                "Withdrawal amount exceeds deposited amount",
+            ))?;
+        }
+        if investor_token.lend_info.principal_redeemed.is_zero() {
+            return Err(StdError::generic_err(
+                "Principal already redeemed, withdrawal not allowed",
+            ))?;
+        }
+        investor_token.lend_info.principal_deposited = investor_token
+            .lend_info
+            .principal_deposited
+            .checked_sub(principal_amount)
+            .map_err(|_| StdError::generic_err("Withdrawal: Underflow"))?;
+
+        self.base.tokens.save(deps.storage, &token_id, &nft)?;
+
+        Ok(Response::new()
+            .add_attribute("method", "withdraw_principal")
+            .add_attribute("token_id", token_id)
+            .add_attribute("amount_withdrawn", principal_amount.to_string()))
+    }
+
+    pub fn redeem(
+        &self,
+        deps: DepsMut,
+        env: Env,
+        info: MessageInfo,
+        token_id: String,
+        principal_redeemed: Uint128,
+        interest_redeemed: Uint128,
+    ) -> Result<Response, ContractError> {
+        let minter = self.base.minter.load(deps.as_ref().storage)?;
+        if info.sender != minter {
+            return Err(ContractError::Unauthorized {});
+        }
+        let mut nft = self.base.tokens.load(deps.as_ref().storage, &token_id)?;
+        let investor_token = nft.extension.as_mut().unwrap();
+        investor_token.lend_info.principal_redeemed = investor_token
+            .lend_info
+            .principal_redeemed
+            .checked_add(principal_redeemed)
+            .map_err(|_| StdError::generic_err("Redeem: Overflow"))?;
+        investor_token.lend_info.interest_redeemed = investor_token
+            .lend_info
+            .interest_redeemed
+            .checked_add(interest_redeemed)
+            .map_err(|_| StdError::generic_err("Redeem: Overflow"))?;
+
+        self.base.tokens.save(deps.storage, &token_id, &nft)?;
+
+        Ok(Response::new()
+            .add_attribute("method", "redeem")
+            .add_attribute("token_id", token_id)
+            .add_attribute("principal_redeemed", principal_redeemed.to_string())
+            .add_attribute("interest_redeemed", interest_redeemed.to_string()))
+    }
+}
+
+//#[cfg(not(feature = "library"))]
 pub mod entry {
     use super::*;
 
@@ -64,7 +149,10 @@ pub mod entry {
         info: MessageInfo,
         msg: InstantiateMsg<Empty>,
     ) -> Result<Response, ContractError> {
-        let res = Cw721MetadataContract::default().instantiate(deps.branch(), env, info, msg)?;
+        let res =
+            Cw721MetadataContract::default()
+                .base
+                .instantiate(deps.branch(), env, info, msg)?;
         // Explicitly set contract name and version, otherwise set to cw721-base info
         set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
             .map_err(ContractError::Std)?;
@@ -78,12 +166,14 @@ pub mod entry {
         info: MessageInfo,
         msg: ExecuteMsg,
     ) -> Result<Response, ContractError> {
-        Cw721MetadataContract::default().execute(deps, env, info, msg)
+        Cw721MetadataContract::default()
+            .base
+            .execute(deps, env, info, msg)
     }
 
     #[entry_point]
     pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
-        Cw721MetadataContract::default().query(deps, env, msg)
+        Cw721MetadataContract::default().base.query(deps, env, msg)
     }
 
     #[entry_point]
@@ -92,7 +182,9 @@ pub mod entry {
         env: Env,
         msg: MigrateMsg<Empty>,
     ) -> Result<Response, ContractError> {
-        Cw721MetadataContract::default().migrate(deps, env, msg)
+        Cw721MetadataContract::default()
+            .base
+            .migrate(deps, env, msg)
     }
 }
 
@@ -145,6 +237,7 @@ mod tests {
             minter: CREATOR.to_string(),
         };
         contract
+            .base
             .instantiate(deps.as_mut(), mock_env(), info.clone(), init_msg)
             .unwrap();
 
