@@ -133,7 +133,7 @@ impl<'a> Cw721MetadataContract<'a> {
     }
 }
 
-//#[cfg(not(feature = "library"))]
+#[cfg(not(feature = "library"))]
 pub mod entry {
     use super::*;
 

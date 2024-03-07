@@ -1,5 +1,5 @@
 use cosmwasm_std::{
-    to_json_binary, Addr, Binary, Deps, Env, Order, QueryRequest, StdResult, Uint128, WasmQuery,
+    to_json_binary, Addr, Binary, Deps, Env, Order, QueryRequest, StdResult, WasmQuery,
 };
 use cw721::{NftInfoResponse, OwnerOfResponse};
 use cw721_metadata_onchain::{InvestorToken, QueryMsg as Cw721QueryMsg};

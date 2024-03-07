@@ -1,8 +1,7 @@
 use cosmwasm_std::{Env, Timestamp, Uint128};
 
 use crate::error::{ContractError, ContractResult};
-use crate::helpers::share_price_to_usdc;
-use crate::state::{BorrowInfo, CreditLine, LendInfo, PaymentFrequency, RepaymentInfo};
+use crate::state::{BorrowInfo, CreditLine, PaymentFrequency, RepaymentInfo};
 use crate::{SIY, TEN_THOUSAND};
 
 impl CreditLine {
