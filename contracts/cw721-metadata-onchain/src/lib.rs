@@ -1,5 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code)]
-mod msg;
+pub mod msg;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{from_json, DepsMut, Empty, Env, MessageInfo, Response, StdError, Uint128};
