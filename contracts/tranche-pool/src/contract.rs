@@ -9,7 +9,10 @@ use cosmwasm_std::{
 };
 
 use cw2::set_contract_version;
-use cw721_base::{ExecuteMsg as CW721ExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg};
+use cw721_base::{
+    ExecuteMsg as Cw721BaseExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg,
+};
+//use cw721_metadata_onchain::msg::ExecuteMsg as Cw721ExecuteMsg;
 
 use crate::{
     error::{ContractError, ContractResult},
@@ -24,10 +27,13 @@ use crate::{
     },
     query::{get_config, get_nft_info, get_nft_owner},
     state::{
-        Config, CreditLine, InvestorToken, PoolSlice, TranchePool, CONFIG, CREDIT_LINES,
-        POOL_SLICES, RESERVE_ADDR, SENIOR_POOLS, TRANCHE_POOLS, WHITELISTED_TOKENS,
+        Config, CreditLine, InvestorToken, PoolSlice, RepaymentInfo, TranchePool, CONFIG,
+        CREDIT_LINES, POOL_SLICES, REPAYMENTS, RESERVE_ADDR, SENIOR_POOLS, TRANCHE_POOLS,
+        WHITELISTED_TOKENS,
     },
 };
+
+pub type Cw721ExecuteMsg = cw721_metadata_onchain::msg::ExecuteMsg<InvestorToken, Empty>;
 
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -223,12 +229,13 @@ pub fn deposit(
 
     let mut nft = InvestorToken::new(config.token_id, msg.pool_id, tranche_id);
     nft.lend_info.principal_deposited += msg.amount;
-    let mint_msg = CW721ExecuteMsg::<InvestorToken, Empty>::Mint(MintMsg {
-        token_id: config.token_id.to_string(),
-        owner: info.sender.to_string(),
-        token_uri: None,
-        extension: nft,
-    });
+    let mint_msg =
+        Cw721ExecuteMsg::Base(Cw721BaseExecuteMsg::<InvestorToken, Empty>::Mint(MintMsg {
+            token_id: config.token_id.to_string(),
+            owner: info.sender.to_string(),
+            token_uri: None,
+            extension: nft,
+        }));
     let wasm_msg = WasmMsg::Execute {
         contract_addr: config.token_issuer.to_string(),
         msg: to_json_binary(&mint_msg)?,
@@ -448,6 +455,19 @@ pub fn repay(
     let repayment_info = credit_line.repay(msg.amount, &env)?;
     CREDIT_LINES.save(deps.storage, msg.pool_id, &credit_line)?;
     let interest_accrued = repayment_info.interest_repaid + repayment_info.interest_pending;
+    REPAYMENTS.update(
+        deps.storage,
+        msg.pool_id,
+        |val| -> ContractResult<Vec<RepaymentInfo>> {
+            match val {
+                None => Ok(vec![repayment_info.clone()]),
+                Some(mut payments) => {
+                    payments.push(repayment_info.clone());
+                    Ok(payments)
+                }
+            }
+        },
+    )?;
 
     let mut res = Response::new();
 
@@ -562,6 +582,7 @@ pub fn withdraw(
 
     let mut slices = load_slices(deps.as_ref(), investor_token.pool_id)?;
     let tranche_info = get_tranche_info(investor_token.tranche_id, &mut slices)?;
+
     let (interest_redeemable, principal_redeemable) =
         tranche_info.redeemable_interest_and_amount(&investor_token)?;
     let total_redeemable = interest_redeemable.checked_add(principal_redeemable)?;
@@ -574,24 +595,46 @@ pub fn withdraw(
     if env.block.time <= tranche_info.locked_until {
         return Err(ContractError::LockedPoolWithdrawal);
     }
-    // !-------
-    // REMOVE THIS; allow withdrawals before locking
-    // -------!
-    let mut interest_withdrawn = Uint128::zero();
-    let mut principal_withdrawn = Uint128::zero();
+
+    let config = get_config(deps.as_ref(), env.clone())?;
     let amount = if let Some(val) = msg.amount {
         val
     } else {
         Uint128::MAX
     };
+    let mut interest_withdrawn = Uint128::zero();
+    let mut principal_withdrawn = Uint128::zero();
+    let mut wasm_msg: CosmosMsg<Empty>;
     if tranche_info.locked_until == Timestamp::default() {
-        return Err(ContractError::CustomError {
-            msg: "Withdrawal before locking not supported".to_string(),
+        tranche_info.principal_deposited = tranche_info.principal_deposited.checked_sub(amount)?;
+        principal_withdrawn = amount;
+
+        let withdraw_msg = Cw721ExecuteMsg::WithdrawPrincipal {
+            token_id: msg.token_id.to_string(),
+            principal_amount: amount,
+        };
+        wasm_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: config.token_issuer.to_string(),
+            msg: to_json_binary(&withdraw_msg)?,
+            funds: vec![],
         });
     } else {
         interest_withdrawn = std::cmp::min(interest_redeemable, amount);
-        principal_withdrawn =
-            std::cmp::min(principal_redeemable, amount.checked_sub(interest_withdrawn)?);
+        principal_withdrawn = std::cmp::min(
+            principal_redeemable,
+            amount.checked_sub(interest_withdrawn)?,
+        );
+
+        let redeem_msg = Cw721ExecuteMsg::Redeem {
+            token_id: msg.token_id.to_string(),
+            principal_redeemed: principal_withdrawn,
+            interest_redeemed: interest_withdrawn,
+        };
+        wasm_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: config.token_issuer.to_string(),
+            msg: to_json_binary(&redeem_msg)?,
+            funds: vec![],
+        });
     }
 
     let pool = load_pool(deps.as_ref(), investor_token.pool_id)?;
@@ -603,13 +646,16 @@ pub fn withdraw(
         ),
     });
 
+    POOL_SLICES.save(deps.storage, investor_token.pool_id, &slices)?;
+
     Ok(Response::new()
         .add_attribute("method", "withdraw")
         .add_attribute("user", info.sender.into_string())
         .add_attribute("interest_withdrawn", interest_withdrawn.to_string())
         .add_attribute("principal_withdrawn", principal_withdrawn.to_string())
         .add_attribute("denom", pool.denom)
-        .add_message(bank_msg))
+        .add_message(bank_msg)
+        .add_message(wasm_msg))
 }
 
 pub fn load_slices(deps: Deps, pool_id: u64) -> ContractResult<Vec<PoolSlice>> {

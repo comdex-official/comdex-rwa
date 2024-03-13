@@ -21,6 +21,7 @@ pub struct TranchePool {
     pub borrower_addr: Addr,
     pub borrower_name: String,
     pub creation_info: Timestamp,
+    pub pool_type: PoolType,
     pub denom: String,
     pub backers: Vec<Addr>,
 }
@@ -28,10 +29,13 @@ pub struct TranchePool {
 #[cw_serde]
 pub enum PoolStatus {
     Open,
-    OnTime,
-    Grace,
     Late,
     Closed,
+}
+
+#[cw_serde]
+pub enum PoolType {
+    Undefined,
 }
 
 #[cw_serde]
@@ -43,8 +47,6 @@ pub struct BorrowInfo {
     pub borrowed_amount: Uint128,
     pub interest_repaid: Uint128,
     pub principal_repaid: Uint128,
-    pub principal_share_price: Decimal,
-    pub interest_share_price: Decimal,
 }
 
 #[cw_serde]
@@ -128,8 +130,10 @@ pub struct ACI {
     pub pool_auth: u64,
 }
 
+#[cw_serde]
 #[derive(Default)]
 pub struct RepaymentInfo {
+    pub timestamp: Timestamp,
     pub principal_repaid: Uint128,
     pub interest_repaid: Uint128,
     pub principal_pending: Uint128,
@@ -147,3 +151,4 @@ pub const WHITELISTED_TOKENS: Map<String, bool> = Map::new("whitelisted_tokens")
 pub const RESERVE_ADDR: Item<Addr> = Item::new("reserves_addr");
 pub const SENIOR_POOLS: Map<String, Addr> = Map::new("senior_pools");
 pub const PAUSED: Item<bool> = Item::new("drawdown_pause");
+pub const REPAYMENTS: Map<u64, Vec<RepaymentInfo>> = Map::new("reapymanet_history");

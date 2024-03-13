@@ -360,8 +360,12 @@ impl CreditLine {
                 msg: "repayment amount is zero".to_string(),
             });
         }
+
         let mut repayment_info = RepaymentInfo::default();
+        repayment_info.timestamp = env.block.time;
+
         self.checkpoint(env)?;
+
         // repay principal and interest
         let current_interest_owed = self.interest_owed(env)?;
         let current_principal_owed = self.principal_owed(env)?;
@@ -387,11 +391,20 @@ impl CreditLine {
             repayment_info.principal_repaid = amount;
             repayment_info.principal_pending = current_principal_owed - amount;
         }
+
+        self.borrow_info.interest_repaid = self
+            .borrow_info
+            .interest_repaid
+            .checked_add(repayment_info.interest_repaid)?;
+        self.borrow_info.principal_repaid = self
+            .borrow_info
+            .principal_repaid
+            .checked_add(repayment_info.principal_repaid)?;
+
         // if both owed amounts in now zero, update last_full_payment
         if repayment_info.interest_pending.is_zero() && repayment_info.principal_pending.is_zero() {
             self.last_full_payment = env.block.time;
         }
         Ok(repayment_info)
     }
-
 }

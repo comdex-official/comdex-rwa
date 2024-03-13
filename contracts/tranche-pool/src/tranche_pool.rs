@@ -1,4 +1,4 @@
-use crate::state::TranchePool;
+use crate::state::{PoolType, TranchePool};
 use cosmwasm_std::{Addr, Env};
 
 impl TranchePool {
@@ -19,6 +19,7 @@ impl TranchePool {
             creation_info: env.block.time,
             denom,
             backers,
+            pool_type: PoolType::Undefined,
         }
     }
 

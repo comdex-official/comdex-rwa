@@ -32,6 +32,13 @@ impl PoolSlice {
         })
     }
 
+    pub fn deposited(&self) -> ContractResult<Uint128> {
+        Ok(self
+            .junior_tranche
+            .principal_deposited
+            .checked_add(self.senior_tranche.principal_deposited)?)
+    }
+
     pub fn is_locked(&self) -> bool {
         self.senior_tranche.locked_until != Timestamp::default()
     }

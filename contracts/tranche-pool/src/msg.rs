@@ -1,6 +1,6 @@
-use crate::state::PaymentFrequency;
+use crate::state::{PaymentFrequency, PoolType};
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::Uint128;
+use cosmwasm_std::{Addr, Decimal, Uint128};
 
 #[cw_serde]
 pub struct InstantiateMsg {
@@ -89,4 +89,28 @@ pub enum QueryMsg {
         start: Option<u64>,
         limit: Option<u8>,
     },
+}
+
+#[cw_serde]
+pub struct PoolResponse {
+    pub pool_id: u64,
+    pub pool_name: String,
+    pub borrower_name: String,
+    pub assets: Uint128,
+    pub denom: String,
+    pub apr: Decimal,
+    pub pool_type: PoolType,
+    pub status: String,
+}
+
+#[cw_serde]
+pub struct AllPoolsResponse {
+    pub data: Vec<PoolResponse>,
+}
+
+#[cw_serde]
+pub struct PaymentInfo {
+    pub addr: Addr,
+    pub paid: Uint128,
+    pub expected: Uint128,
 }

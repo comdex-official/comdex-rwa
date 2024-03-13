@@ -1,13 +1,19 @@
 use cosmwasm_std::{
-    to_json_binary, Addr, Binary, Deps, Env, Order, QueryRequest, StdResult, WasmQuery,
+    to_json_binary, Addr, Binary, Decimal, Deps, Env, Order, QueryRequest, StdError, StdResult,
+    Uint128, WasmQuery,
 };
 use cw721::{NftInfoResponse, OwnerOfResponse};
 use cw721_metadata_onchain::{InvestorToken, QueryMsg as Cw721QueryMsg};
-use cw_storage_plus::Bound;
 
 use crate::{
-    msg::QueryMsg,
-    state::{Config, TranchePool, CONFIG, TRANCHE_POOLS},
+    contract::load_slices,
+    error::ContractResult,
+    msg::{AllPoolsResponse, PoolResponse, QueryMsg},
+    state::{
+        Config, RepaymentInfo, TranchePool, CONFIG, CREDIT_LINES, POOL_SLICES, REPAYMENTS,
+        TRANCHE_POOLS,
+    },
+    ContractError,
 };
 
 const DEFAULT_LIMIT: u8 = 10;
@@ -37,17 +43,30 @@ pub fn get_all_pools(
     _env: Env,
     start: Option<u64>,
     limit: Option<u8>,
-) -> StdResult<Vec<TranchePool>> {
-    let start = start.map(|s| Bound::inclusive(s));
-    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
+) -> StdResult<AllPoolsResponse> {
+    let start = start.unwrap_or_default();
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as u64;
+    let end = start + limit;
 
-    let pools: StdResult<Vec<TranchePool>> = TRANCHE_POOLS
-        .range(deps.storage, start, None, Order::Ascending)
-        .take(limit)
-        .map(|item| item.map(|(_, p)| p))
-        .collect();
+    let mut pools = Vec::new();
 
-    Ok(pools?)
+    for pool_id in start..end {
+        let pool = TRANCHE_POOLS.load(deps.storage, pool_id)?;
+        let credit_line = CREDIT_LINES.load(deps.storage, pool_id)?;
+        pools.push(PoolResponse {
+            pool_id,
+            pool_name: pool.pool_name,
+            borrower_name: pool.borrower_name,
+            assets: credit_line.borrow_info.borrowed_amount,
+            denom: pool.denom,
+            apr: Decimal::from_atomics(credit_line.interest_apr as u128, 2)
+                .map_err(|_| StdError::generic_err("interest apr conversion error"))?,
+            pool_type: pool.pool_type,
+            status: "OPEN".to_string(),
+        });
+    }
+
+    Ok(AllPoolsResponse { data: pools })
 }
 
 pub fn get_nft_owner(deps: Deps, env: Env, token_id: u64) -> StdResult<Addr> {
@@ -75,4 +94,50 @@ pub fn get_nft_info(deps: Deps, env: Env, token_id: u64) -> StdResult<InvestorTo
             msg: to_json_binary(&query_msg)?,
         }))?;
     Ok(nft_info.extension)
+}
+
+pub fn total_pool_deposit(deps: Deps, pool_id: u64) -> ContractResult<Uint128> {
+    let slices = load_slices(deps, pool_id)?;
+    let mut amount = Uint128::zero();
+
+    for slice in slices.iter() {
+        amount = amount.checked_add(slice.deposited()?)?;
+    }
+
+    Ok(amount)
+}
+
+pub fn get_repayment_info(deps: Deps, pool_id: u64) -> StdResult<Vec<RepaymentInfo>> {
+    let payments = REPAYMENTS
+        .may_load(deps.storage, pool_id)?
+        .unwrap_or_default();
+    Ok(payments)
+}
+
+pub fn pool_value_locked(deps: Deps, pool_id: u64) -> StdResult<Uint128> {
+    let cl = CREDIT_LINES.load(deps.storage, pool_id)?;
+    Ok(cl
+        .borrow_info
+        .total_borrowed
+        .checked_sub(cl.borrow_info.principal_repaid)?)
+}
+
+pub fn total_value_locked(deps: Deps) -> StdResult<Uint128> {
+    let mut locked_amount = Uint128::zero();
+    let mut pool_value_locked: Uint128;
+    for result in CREDIT_LINES.range(deps.storage, None, None, Order::Ascending) {
+        if result.is_err() {
+            continue;
+        }
+        let (pool_id, credit_line) = result.unwrap();
+        pool_value_locked = credit_line
+            .borrow_info
+            .total_borrowed
+            .checked_sub(credit_line.borrow_info.principal_repaid)
+            .unwrap_or_default();
+        locked_amount = locked_amount
+            .checked_add(pool_value_locked)
+            .unwrap_or_else(|_| locked_amount);
+    }
+    Ok(locked_amount)
 }
