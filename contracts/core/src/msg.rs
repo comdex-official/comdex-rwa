@@ -1,10 +1,7 @@
 use crate::state::*;
-
-use cosmwasm_std::{Addr};
-use cosmwasm_std::{Coin};
+use cosmwasm_std::{Addr, Coin};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -23,7 +20,6 @@ pub enum ExecuteMsg {
     AcceptRequest {
         address: Addr,
     },
-
     CreateProfile {
         name: String,
         email_id: String,
@@ -38,7 +34,6 @@ pub enum ExecuteMsg {
         service_type: ServiceType,
         doc_uri: String,
     },
-
     SetConfig {
         nft_address: Addr,
         owner: Addr,
@@ -47,8 +42,15 @@ pub enum ExecuteMsg {
     AcceptInvoice {
         invoice_id: u64,
     },
+    RejectInvoice {
+        invoice_id: u64,
+    },
     PayInvoice {
         invoice_id: u64,
+    },
+    UpdateKYC {
+        address: Addr,
+        kyc_status: KYCStatus,
     },
 }
 

@@ -117,7 +117,6 @@ pub fn set_config(
     owner: Addr,
     accepted_assets: Vec<Asset>,
 ) -> Result<Response, ContractError> {
-    
     let config = Config {
         nft_address: nft_address,
         owner: owner,

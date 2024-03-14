@@ -83,6 +83,11 @@ pub fn execute(
         ),
         ExecuteMsg::AcceptInvoice { invoice_id } => accept_invoice(deps, env, info, invoice_id),
         ExecuteMsg::PayInvoice { invoice_id } => pay_invoice(deps, env, info, invoice_id),
+        ExecuteMsg::UpdateKYC {
+            address,
+            kyc_status,
+        } => profile::update_kyc(deps, env, info, address, kyc_status),
+        ExecuteMsg::RejectInvoice { invoice_id } => reject_invoice(deps, env, info, invoice_id),
     }
 }
 
@@ -102,7 +107,9 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::GetTotalReceivables { address } => {
             to_json_binary(&get_total_receivables(deps, address)?)
         }
-        QueryMsg::GetTotalPayables { address } => to_json_binary(&get_total_payables(deps, address)?),
+        QueryMsg::GetTotalPayables { address } => {
+            to_json_binary(&get_total_payables(deps, address)?)
+        }
         QueryMsg::GetPendingContactRequests { address } => {
             to_json_binary(&get_pending_contact_requests(deps, address)?)
         }
