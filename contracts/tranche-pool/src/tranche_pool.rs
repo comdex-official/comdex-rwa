@@ -9,6 +9,7 @@ impl TranchePool {
         borrower_name: String,
         denom: String,
         backers: Vec<Addr>,
+        pool_type: PoolType,
         env: &Env,
     ) -> Self {
         TranchePool {
@@ -19,7 +20,7 @@ impl TranchePool {
             creation_info: env.block.time,
             denom,
             backers,
-            pool_type: PoolType::Undefined,
+            pool_type,
         }
     }
 

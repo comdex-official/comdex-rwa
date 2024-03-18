@@ -5,13 +5,15 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     coins, to_json_binary, BankMsg, CosmosMsg, Decimal, Deps, DepsMut, Empty, Env, MessageInfo,
-    QueryRequest, Response, StdError, Timestamp, Uint128, WasmMsg, WasmQuery,
+    QueryRequest, Reply, Response, StdError, StdResult, SubMsg, Timestamp, Uint128, WasmMsg,
+    WasmQuery,
 };
 
 use cw2::set_contract_version;
 use cw721_base::{
     ExecuteMsg as Cw721BaseExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg,
 };
+use cw_utils::parse_reply_instantiate_data;
 //use cw721_metadata_onchain::msg::ExecuteMsg as Cw721ExecuteMsg;
 
 use crate::{
@@ -27,9 +29,9 @@ use crate::{
     },
     query::{get_config, get_nft_info, get_nft_owner},
     state::{
-        Config, CreditLine, InvestorToken, PoolSlice, RepaymentInfo, TranchePool, CONFIG,
-        CREDIT_LINES, POOL_SLICES, REPAYMENTS, RESERVE_ADDR, SENIOR_POOLS, TRANCHE_POOLS,
-        WHITELISTED_TOKENS,
+        Config, CreditLine, InvestorToken, PoolSlice, PoolType, RepaymentInfo, TranchePool, CONFIG,
+        CREDIT_LINES, KYC_CONTRACT, POOL_SLICES, REPAYMENTS, RESERVE_ADDR, SENIOR_POOLS,
+        TRANCHE_POOLS, WHITELISTED_TOKENS,
     },
 };
 
@@ -38,6 +40,7 @@ pub type Cw721ExecuteMsg = cw721_metadata_onchain::msg::ExecuteMsg<InvestorToken
 // version info for migration info
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const INSTANTIATE_REPLY_ID: u64 = 1;
 
 // Minimum investment of $10,000 to become a backer if not in backer list
 const MIN_DEPOSIT: Uint128 = Uint128::new(10_000_000_000u128);
@@ -58,13 +61,18 @@ pub fn instantiate(
         admin,
         grace_period: None,
         token_id: 0,
-        token_issuer: deps.api.addr_validate(&msg.token_issuer)?,
+        token_issuer: info.sender.clone(),
         reserve_fee: msg.reserves_fee,
     };
     CONFIG.save(deps.storage, &config)?;
 
     let reserves_addr = deps.api.addr_validate(&msg.reserves_addr)?;
     RESERVE_ADDR.save(deps.storage, &reserves_addr)?;
+
+    let kyc_contract = deps.api.addr_validate(&msg.kyc_addr)?;
+    KYC_CONTRACT.save(deps.storage, &kyc_contract)?;
+
+    WHITELISTED_TOKENS.save(deps.storage, msg.denom, &true)?;
 
     let cw721_msg = Cw721IntantiateMsg {
         name: "PoolToken".to_string(),
@@ -73,15 +81,37 @@ pub fn instantiate(
         minter: env.contract.address.to_string(),
         metadata: Empty {},
     };
-    let cosmos_msg = CosmosMsg::Wasm(WasmMsg::Instantiate {
+    let instantiate_msg = CosmosMsg::Wasm(WasmMsg::Instantiate {
         admin: Some(info.sender.to_string()),
         code_id: msg.code_id,
         msg: to_json_binary(&cw721_msg)?,
         funds: vec![],
         label: "Pool Token #2".to_string(),
     });
+    let submessage = SubMsg::reply_on_success(instantiate_msg, INSTANTIATE_REPLY_ID);
 
-    Ok(Response::default().add_message(cosmos_msg))
+    Ok(Response::default().add_submessage(submessage))
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
+    match msg.id {
+        INSTANTIATE_REPLY_ID => handle_instantiate_reply(deps, msg),
+        id => Err(StdError::GenericErr {
+            msg: format!("Unknown reply id: {}", id),
+        }),
+    }
+}
+
+pub fn handle_instantiate_reply(deps: DepsMut, msg: Reply) -> StdResult<Response> {
+    let res = parse_reply_instantiate_data(msg)
+        .map_err(|e| StdError::generic_err(format!("Error on reply: {}", e)))?;
+
+    let mut config = CONFIG.load(deps.as_ref().storage)?;
+    config.token_issuer = deps.api.addr_validate(&res.contract_address)?;
+    CONFIG.save(deps.storage, &config)?;
+
+    Ok(Response::new().add_attribute("token_issuer", config.token_issuer.to_string()))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -98,6 +128,8 @@ pub fn execute(
         ExecuteMsg::Drawdown { msg } => drawdown(deps, env, info, msg),
         ExecuteMsg::LockPool { msg } => lock_pool(deps, env, info, msg),
         ExecuteMsg::LockJuniorCapital { msg } => lock_junior_capital(deps, env, info, msg),
+        ExecuteMsg::SetKycContract { addr } => set_kyc_contract(deps, env, info, addr),
+        ExecuteMsg::WhitelistToken { denom } => whitelist_token(deps, info, denom),
         _ => todo!(),
     }
 }
@@ -155,6 +187,7 @@ pub fn create_pool(
         msg.borrower_name,
         msg.denom,
         backers,
+        msg.pool_type,
         &env,
     );
 
@@ -316,6 +349,7 @@ pub fn drawdown(
     Ok(Response::new().add_message(msg))
 }
 
+#[allow(unused_variables, unused_mut)]
 pub fn lock_junior_capital(
     deps: DepsMut,
     env: Env,
@@ -332,37 +366,52 @@ pub fn lock_junior_capital(
         .load(deps.as_ref().storage, pool.denom.clone())
         .map_err(|_| ContractError::SeniorPoolNotFound { denom: pool.denom })?;
 
+    let cl = load_credit_line(deps.as_ref(), msg.pool_id)?;
+
     // calculate total junior pool deposits
     let mut junior_deposits = Uint128::zero();
-    for slice in slices.iter() {
+    for slice in slices.iter_mut() {
+        if slice.junior_tranche.locked_until == Timestamp::default() {
+            continue;
+        }
         junior_deposits = junior_deposits.checked_add(slice.junior_tranche.principal_deposited)?;
+        slice.junior_tranche.locked_until = env.block.time.plus_seconds(cl.drawdown_period);
     }
-    // query the leverage ratio
-    let query_msg = QueryRequest::Wasm(WasmQuery::Smart {
-        contract_addr: senior_pool_addr.to_string(),
-        msg: to_json_binary(&MaxLeverageRatio {})?,
-    });
-    let leverage_ratio: Decimal = deps.querier.query(&query_msg)?;
-    // calculate senior pool amount: lr * junior deposit
-    let investment_amount =
-        leverage_ratio.checked_sub(Decimal::from_atomics(junior_deposits.u128(), 0)?)?;
-    // request the amount from senior pool
-    let execute_msg = Invest {
-        pool_id: 0,
-        tranche_id: 0,
-        amount: Uint128::zero(),
-    };
-    let cosmos_msg = WasmMsg::Execute {
-        contract_addr: senior_pool_addr.to_string(),
-        msg: to_json_binary(&execute_msg)?,
-        funds: vec![],
+
+    let mut res = Response::new();
+    match pool.pool_type {
+        PoolType::Junior => {}
+        PoolType::Undefined => {
+            // query the leverage ratio
+            //let query_msg = QueryRequest::Wasm(WasmQuery::Smart {
+            //contract_addr: senior_pool_addr.to_string(),
+            //msg: to_json_binary(&MaxLeverageRatio {})?,
+            //});
+            //let leverage_ratio: Decimal = deps.querier.query(&query_msg)?;
+            //// calculate senior pool amount: lr * junior deposit
+            //let investment_amount =
+            //leverage_ratio.checked_sub(Decimal::from_atomics(junior_deposits.u128(), 0)?)?;
+            //// request the amount from senior pool
+            //let execute_msg = Invest {
+            //pool_id: 0,
+            //tranche_id: 0,
+            //amount: Uint128::zero(),
+            //};
+            //let cosmos_msg = WasmMsg::Execute {
+            //contract_addr: senior_pool_addr.to_string(),
+            //msg: to_json_binary(&execute_msg)?,
+            //funds: vec![],
+            //};
+            //res.add_message(cosmos_msg);
+        }
     };
 
-    Ok(Response::new()
+    POOL_SLICES.save(deps.storage, msg.pool_id, &slices)?;
+
+    Ok(res
         .add_attribute("method", "lock_junior_capital")
         .add_attribute("borrower", info.sender.to_string())
-        .add_attribute("junior_capital", junior_deposits.to_string())
-        .add_message(cosmos_msg))
+        .add_attribute("junior_capital", junior_deposits.to_string()))
 }
 
 pub fn lock_pool(
@@ -658,6 +707,41 @@ pub fn withdraw(
         .add_message(wasm_msg))
 }
 
+pub fn whitelist_token(
+    deps: DepsMut,
+    info: MessageInfo,
+    denom: String,
+) -> ContractResult<Response> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+    WHITELISTED_TOKENS.save(deps.storage, denom.clone(), &true)?;
+
+    Ok(Response::new()
+        .add_attribute("method", "whitelist_token")
+        .add_attribute("new token", denom))
+}
+
+pub fn set_kyc_contract(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    addr: String,
+) -> ContractResult<Response> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let new_addr = deps.api.addr_validate(&addr)?;
+    KYC_CONTRACT.save(deps.storage, &new_addr)?;
+
+    Ok(Response::new()
+        .add_attribute("method", "set_kyc_contract".to_string())
+        .add_attribute("new_addr", addr))
+}
+
 pub fn load_slices(deps: Deps, pool_id: u64) -> ContractResult<Vec<PoolSlice>> {
     Ok(POOL_SLICES
         .load(deps.storage, pool_id)
@@ -676,17 +760,6 @@ pub fn load_pool(deps: Deps, pool_id: u64) -> ContractResult<TranchePool> {
         .map_err(|_| ContractError::InvalidPoolId { id: pool_id })?)
 }
 
-pub fn whitelist_token(deps: DepsMut, denom: String) -> ContractResult<Response> {
-    // !-------
-    // Assert admin
-    // -------!
-    WHITELISTED_TOKENS.save(deps.storage, denom.clone(), &true)?;
-
-    Ok(Response::new()
-        .add_attribute("method", "whitelist_token")
-        .add_attribute("new token", denom))
-}
-
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult<Response> {
     let ver = cw2::get_contract_version(deps.storage)?;
@@ -700,6 +773,11 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult<Res
     }
     // set the new version
     cw2::set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+    let placeholder_contract = deps
+        .api
+        .addr_validate("comdex1p4lqunauqgstt6ydszx59y3pg2tkaxlnujl9m5ldz7nqcrn6tjzqlz9pkm")?;
+    SENIOR_POOLS.save(deps.storage, "usdc".to_string(), &placeholder_contract)?;
 
     Ok(Response::default())
 }

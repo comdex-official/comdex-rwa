@@ -5,10 +5,11 @@ use cosmwasm_std::{Addr, Decimal, Uint128};
 #[cw_serde]
 pub struct InstantiateMsg {
     pub admin: String,
-    pub token_issuer: String,
     pub code_id: u64,
     pub reserves_fee: u16,
     pub reserves_addr: String,
+    pub kyc_addr: String,
+    pub denom: String,
 }
 
 #[cw_serde]
@@ -20,6 +21,9 @@ pub enum ExecuteMsg {
     AddBackers { backers: Vec<String> },
     LockPool { msg: LockPoolMsg },
     LockJuniorCapital { msg: LockJuniorCapitalMsg },
+    SetKycContract { addr: String },
+    WhitelistToken { denom: String },
+    SetSeniorPool { denom: String, addr: String },
 }
 
 #[cw_serde]
@@ -42,6 +46,7 @@ pub struct CreatePoolMsg {
     pub term_length: u64,
     pub denom: String,
     pub backers: Vec<String>,
+    pub pool_type: PoolType,
 }
 
 #[cw_serde]

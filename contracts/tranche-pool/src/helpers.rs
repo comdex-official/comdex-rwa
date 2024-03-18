@@ -232,16 +232,16 @@ pub fn validate_create_pool_msg(
             msg: "Term length should be non-zero".to_string(),
         });
     }
-    if msg.term_length % msg.interest_frequency.to_seconds() != 0 {
-        return Err(ContractError::CustomError {
-            msg: "Term should be divisible by interest frequency".to_string(),
-        });
-    }
-    if msg.term_length % msg.principal_frequency.to_seconds() != 0 {
-        return Err(ContractError::CustomError {
-            msg: "Term should be divisible by principal frequency".to_string(),
-        });
-    }
+    //if msg.term_length % msg.interest_frequency.to_seconds() != 0 {
+        //return Err(ContractError::CustomError {
+            //msg: "Term should be divisible by interest frequency".to_string(),
+        //});
+    //}
+    //if msg.term_length % msg.principal_frequency.to_seconds() != 0 {
+        //return Err(ContractError::CustomError {
+            //msg: "Term should be divisible by principal frequency".to_string(),
+        //});
+    //}
     Ok(())
 }
 

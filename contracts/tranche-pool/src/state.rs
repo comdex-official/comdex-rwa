@@ -36,6 +36,7 @@ pub enum PoolStatus {
 #[cw_serde]
 pub enum PoolType {
     Undefined,
+    Junior
 }
 
 #[cw_serde]

@@ -1,3 +1,7 @@
+// !-------
+// REMOVE THIS LINE
+// -------!
+#![allow(unused_variables, unused_mut, unused_assignments)]
 pub mod contract;
 pub mod error;
 pub mod msg;
