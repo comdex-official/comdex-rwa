@@ -135,6 +135,8 @@ impl<'a> Cw721MetadataContract<'a> {
 
 #[cfg(not(feature = "library"))]
 pub mod entry {
+    use self::msg::ExecuteMsg;
+
     use super::*;
 
     use cosmwasm_std::entry_point;
@@ -164,11 +166,28 @@ pub mod entry {
         deps: DepsMut,
         env: Env,
         info: MessageInfo,
-        msg: ExecuteMsg,
+        msg: ExecuteMsg<Extension, Empty>,
     ) -> Result<Response, ContractError> {
-        Cw721MetadataContract::default()
-            .base
-            .execute(deps, env, info, msg)
+        let contract = Cw721MetadataContract::default();
+        match msg {
+            ExecuteMsg::WithdrawPrincipal {
+                token_id,
+                principal_amount,
+            } => contract.withdraw_principal(deps, env, info, token_id, principal_amount),
+            ExecuteMsg::Redeem {
+                token_id,
+                principal_redeemed,
+                interest_redeemed,
+            } => contract.redeem(
+                deps,
+                env,
+                info,
+                token_id,
+                principal_redeemed,
+                interest_redeemed,
+            ),
+            ExecuteMsg::Base(inner_msg) => contract.base.execute(deps, env, info, inner_msg),
+        }
     }
 
     #[entry_point]
@@ -182,9 +201,10 @@ pub mod entry {
         env: Env,
         msg: MigrateMsg<Empty>,
     ) -> Result<Response, ContractError> {
-        Cw721MetadataContract::default()
-            .base
-            .migrate(deps, env, msg)
+        //Cw721MetadataContract::default()
+            //.base
+            //.migrate(deps, env, msg)
+        Ok(Response::new())
     }
 }
 

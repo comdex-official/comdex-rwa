@@ -81,21 +81,21 @@ where
         &self,
         deps: DepsMut,
         _env: Env,
-        msg: MigrateMsg<CollectionMetadataExt>,
+        _msg: MigrateMsg<CollectionMetadataExt>,
     ) -> Result<Response<ResponseExt>, ContractError> {
         // Set contract to version to latest
         set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
         // Save updated config
-        self.contract_info.save(
-            deps.storage,
-            &ContractInfoResponse::<CollectionMetadataExt> {
-                name: msg.name,
-                symbol: msg.symbol,
-                collection_uri: msg.collection_uri,
-                metadata: msg.metadata,
-            },
-        )?;
+        //self.contract_info.save(
+            //deps.storage,
+            //&ContractInfoResponse::<CollectionMetadataExt> {
+                //name: msg.name,
+                //symbol: msg.symbol,
+                //collection_uri: msg.collection_uri,
+                //metadata: msg.metadata,
+            //},
+        //)?;
 
         Ok(Response::default())
     }
