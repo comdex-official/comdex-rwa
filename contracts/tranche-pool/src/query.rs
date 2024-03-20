@@ -11,13 +11,12 @@ use crate::{
     msg::{AllPoolsResponse, PoolResponse, QueryMsg},
     state::{
         Config, RepaymentInfo, TranchePool, CONFIG, CREDIT_LINES, POOL_SLICES, REPAYMENTS,
-        TRANCHE_POOLS,
+        TRANCHE_POOLS, WHITELISTED_TOKENS,
     },
-    ContractError,
 };
 
-const DEFAULT_LIMIT: u8 = 10;
-const MAX_LIMIT: u8 = 20;
+const DEFAULT_LIMIT: u8 = 50;
+const MAX_LIMIT: u8 = 99;
 
 #[cfg_attr(not(feature = "library"), cosmwasm_std::entry_point)]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
@@ -44,21 +43,26 @@ pub fn get_all_pools(
     start: Option<u64>,
     limit: Option<u8>,
 ) -> StdResult<AllPoolsResponse> {
-    let start = start.unwrap_or_default();
+    let start = start.unwrap_or(1u64);
     let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as u64;
     let end = start + limit;
 
     let mut pools = Vec::new();
 
     for pool_id in start..end {
+        if !TRANCHE_POOLS.has(deps.storage, pool_id) {
+            break;
+        };
         let pool = TRANCHE_POOLS.load(deps.storage, pool_id)?;
         let credit_line = CREDIT_LINES.load(deps.storage, pool_id)?;
+        let decimals = WHITELISTED_TOKENS.load(deps.storage, pool.denom.to_owned())?;
         pools.push(PoolResponse {
             pool_id,
             pool_name: pool.pool_name,
             borrower_name: pool.borrower_name,
             assets: credit_line.borrow_info.borrowed_amount,
             denom: pool.denom,
+            decimals: decimals.1,
             apr: Decimal::from_atomics(credit_line.interest_apr as u128, 2)
                 .map_err(|_| StdError::generic_err("interest apr conversion error"))?,
             pool_type: pool.pool_type,

@@ -18,6 +18,8 @@ impl CreditLine {
         principal_frequency: PaymentFrequency,
         env: &Env,
     ) -> Self {
+        let mut borrow_info = BorrowInfo::default();
+        borrow_info.borrow_limit = borrow_limit;
         CreditLine {
             term_start: Timestamp::default(),
             term_end: Timestamp::default(),
@@ -25,7 +27,7 @@ impl CreditLine {
             grace_period,
             principal_grace_period,
             drawdown_period,
-            borrow_info: BorrowInfo::default(),
+            borrow_info,
             interest_apr,
             junior_fee_percent,
             late_fee_apr,

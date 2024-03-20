@@ -72,7 +72,11 @@ pub fn instantiate(
     let kyc_contract = deps.api.addr_validate(&msg.kyc_addr)?;
     KYC_CONTRACT.save(deps.storage, &kyc_contract)?;
 
-    WHITELISTED_TOKENS.save(deps.storage, msg.denom, &true)?;
+    WHITELISTED_TOKENS.save(
+        deps.storage,
+        msg.denom,
+        &(true, 10u32.pow(msg.decimals as u32)),
+    )?;
 
     let cw721_msg = Cw721IntantiateMsg {
         name: "PoolToken".to_string(),
@@ -129,7 +133,9 @@ pub fn execute(
         ExecuteMsg::LockPool { msg } => lock_pool(deps, env, info, msg),
         ExecuteMsg::LockJuniorCapital { msg } => lock_junior_capital(deps, env, info, msg),
         ExecuteMsg::SetKycContract { addr } => set_kyc_contract(deps, env, info, addr),
-        ExecuteMsg::WhitelistToken { denom } => whitelist_token(deps, info, denom),
+        ExecuteMsg::WhitelistToken { denom, decimals } => {
+            whitelist_token(deps, info, denom, decimals)
+        }
         _ => todo!(),
     }
 }
@@ -711,16 +717,19 @@ pub fn whitelist_token(
     deps: DepsMut,
     info: MessageInfo,
     denom: String,
+    decimals: u8,
 ) -> ContractResult<Response> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
         return Err(ContractError::Unauthorized {});
     }
-    WHITELISTED_TOKENS.save(deps.storage, denom.clone(), &true)?;
+    let decimals_pow = 10u32.pow(decimals as u32);
+    WHITELISTED_TOKENS.save(deps.storage, denom.clone(), &(true, decimals_pow))?;
 
     Ok(Response::new()
         .add_attribute("method", "whitelist_token")
-        .add_attribute("new token", denom))
+        .add_attribute("token", denom)
+        .add_attribute("decimals", decimals.to_string()))
 }
 
 pub fn set_kyc_contract(
@@ -745,19 +754,25 @@ pub fn set_kyc_contract(
 pub fn load_slices(deps: Deps, pool_id: u64) -> ContractResult<Vec<PoolSlice>> {
     Ok(POOL_SLICES
         .load(deps.storage, pool_id)
-        .map_err(|_| ContractError::InvalidPoolId { id: pool_id })?)
+        .map_err(|_| ContractError::CustomError {
+            msg: format!("Unable to load tranches for given pool_id: {}", pool_id),
+        })?)
 }
 
 pub fn load_credit_line(deps: Deps, pool_id: u64) -> ContractResult<CreditLine> {
     Ok(CREDIT_LINES
         .load(deps.storage, pool_id)
-        .map_err(|_| ContractError::InvalidPoolId { id: pool_id })?)
+        .map_err(|_| ContractError::CustomError {
+            msg: format!("Unable to load credit line for given pool_id: {}", pool_id),
+        })?)
 }
 
 pub fn load_pool(deps: Deps, pool_id: u64) -> ContractResult<TranchePool> {
     Ok(TRANCHE_POOLS
         .load(deps.storage, pool_id)
-        .map_err(|_| ContractError::InvalidPoolId { id: pool_id })?)
+        .map_err(|_| ContractError::CustomError {
+            msg: format!("Unable to load pool with given pool_id: {}", pool_id),
+        })?)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -774,10 +789,210 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult<Res
     // set the new version
     cw2::set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
-    let placeholder_contract = deps
-        .api
-        .addr_validate("comdex1p4lqunauqgstt6ydszx59y3pg2tkaxlnujl9m5ldz7nqcrn6tjzqlz9pkm")?;
-    SENIOR_POOLS.save(deps.storage, "usdc".to_string(), &placeholder_contract)?;
-
     Ok(Response::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        state::{BorrowInfo, PaymentFrequency},
+        GRACE_PERIOD,
+    };
+
+    use super::*;
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env, mock_info},
+        Addr,
+    };
+
+    const USDC: &str = "usdc";
+
+    fn init_msg() -> InstantiateMsg {
+        InstantiateMsg {
+            admin: "admin".to_string(),
+            code_id: 15,
+            reserves_fee: 1000,
+            reserves_addr: "reserves".to_string(),
+            kyc_addr: "kyc_contract".to_string(),
+            denom: "usdc".to_string(),
+            decimals: 6,
+        }
+    }
+
+    fn create_pool_msg() -> CreatePoolMsg {
+        CreatePoolMsg {
+            pool_name: "Demo Pool 1".to_string(),
+            borrower: "borrower".to_string(),
+            borrower_name: "Borrower 1".to_string(),
+            uid_token: Uint128::zero(),
+            interest_apr: 500,
+            junior_fee_percent: 2000,
+            late_fee_apr: 1000,
+            borrow_limit: Uint128::new(1000000000000),
+            interest_frequency: PaymentFrequency::Monthly,
+            principal_frequency: PaymentFrequency::Monthly,
+            principal_grace_period: 7776000,
+            drawdown_period: 1209600,
+            term_length: 31536000,
+            denom: USDC.to_string(),
+            backers: vec![],
+            pool_type: PoolType::Junior,
+        }
+    }
+
+    #[test]
+    fn proper_instantiation() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = mock_info("admin", &[]);
+
+        let msg = init_msg();
+        let result = instantiate(deps.as_mut(), env, info.clone(), msg).unwrap();
+
+        let config = CONFIG.load(deps.as_ref().storage).unwrap();
+        assert_eq!(config.pool_id, 0u64);
+        assert_eq!(config.token_id, 0u128);
+        assert_eq!(config.admin, Addr::unchecked("admin"));
+        assert_eq!(config.grace_period, None);
+        assert_eq!(config.reserve_fee, 1000u16);
+        // token issuer is admin because the reply is not called in testing
+        assert_eq!(config.token_issuer, Addr::unchecked("admin"));
+    }
+
+    #[test]
+    fn test_create_pool() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = mock_info("admin", &[]);
+
+        let msg = init_msg();
+        let result = instantiate(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+
+        let borrower = Addr::unchecked("borrower");
+
+        SENIOR_POOLS
+            .save(
+                deps.as_mut().storage,
+                USDC.to_string(),
+                &Addr::unchecked("usdc_senior_pool"),
+            )
+            .unwrap();
+
+        let pool_msg = create_pool_msg();
+        let info = mock_info(borrower.as_str(), &[]);
+        let response =
+            create_pool(deps.as_mut(), env.clone(), info.clone(), pool_msg.clone()).unwrap();
+
+        const POOL_ID: u64 = 1u64;
+
+        let pool = TRANCHE_POOLS.load(deps.as_ref().storage, POOL_ID).unwrap();
+        assert_eq!(pool.pool_id, POOL_ID);
+        assert_eq!(pool.pool_name, pool_msg.pool_name);
+        assert_eq!(pool.pool_type, pool_msg.pool_type);
+        assert_eq!(pool.borrower_addr, borrower);
+        assert_eq!(pool.borrower_name, pool_msg.borrower_name);
+
+        let config = CONFIG.load(deps.as_ref().storage).unwrap();
+        assert_eq!(config.pool_id, POOL_ID);
+
+        let cl = CREDIT_LINES.load(deps.as_ref().storage, POOL_ID).unwrap();
+        assert_eq!(cl.term_start, Timestamp::default());
+        assert_eq!(cl.term_end, Timestamp::default());
+        assert_eq!(cl.term_length, pool_msg.term_length);
+        assert_eq!(cl.principal_grace_period, pool_msg.principal_grace_period);
+        assert_eq!(cl.drawdown_period, pool_msg.drawdown_period);
+        let mut borrow_info = BorrowInfo::default();
+        borrow_info.borrow_limit = pool_msg.borrow_limit;
+        assert_eq!(cl.borrow_info, borrow_info);
+        assert_eq!(cl.interest_apr, pool_msg.interest_apr);
+        assert_eq!(cl.junior_fee_percent, pool_msg.junior_fee_percent);
+        assert_eq!(cl.late_fee_apr, pool_msg.late_fee_apr);
+        assert_eq!(cl.interest_frequency, pool_msg.interest_frequency);
+        assert_eq!(cl.principal_frequency, pool_msg.principal_frequency);
+        assert_eq!(cl.last_update_ts, env.block.time);
+        assert_eq!(cl.last_full_payment, Timestamp::default());
+        assert_eq!(cl.interest_owed, Uint128::zero());
+        assert_eq!(cl.interest_accrued, Uint128::zero());
+        if config.grace_period.is_some() {
+            assert_eq!(cl.grace_period, config.grace_period.unwrap());
+        } else {
+            assert_eq!(cl.grace_period, GRACE_PERIOD);
+        };
+
+        // !-------
+        // check slices
+        // -------!
+    }
+
+    #[test]
+    fn test_deposit() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = mock_info("admin", &[]);
+
+        let msg = init_msg();
+        let result = instantiate(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+
+        let borrower = Addr::unchecked("borrower");
+
+        SENIOR_POOLS
+            .save(
+                deps.as_mut().storage,
+                USDC.to_string(),
+                &Addr::unchecked("usdc_senior_pool"),
+            )
+            .unwrap();
+
+        let pool_msg = create_pool_msg();
+        let info = mock_info(borrower.as_str(), &[]);
+        let response = create_pool(deps.as_mut(), env.clone(), info.clone(), pool_msg).unwrap();
+
+        assert!(TRANCHE_POOLS.has(deps.as_ref().storage, 1u64));
+        assert!(POOL_SLICES.has(deps.as_ref().storage, 1));
+
+        let deposit_msg = DepositMsg {
+            amount: Uint128::new(10000000000),
+            pool_id: 1,
+            tranche_id: 1,
+        };
+        let info = mock_info("backer1", &coins(10000000000, USDC));
+        let response = deposit(deps.as_mut(), env.clone(), info, deposit_msg).unwrap();
+    }
+
+    #[test]
+    fn test_drawdown_soon_after_pool_creation() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = mock_info("admin", &[]);
+
+        let msg = init_msg();
+        let result = instantiate(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+
+        let borrower = Addr::unchecked("borrower");
+
+        SENIOR_POOLS
+            .save(
+                deps.as_mut().storage,
+                USDC.to_string(),
+                &Addr::unchecked("usdc_senior_pool"),
+            )
+            .unwrap();
+
+        let pool_msg = create_pool_msg();
+        let info = mock_info(borrower.as_str(), &[]);
+        let response = create_pool(deps.as_mut(), env.clone(), info.clone(), pool_msg).unwrap();
+
+        assert!(TRANCHE_POOLS.has(deps.as_ref().storage, 1u64));
+
+        let drawdown_msg = DrawdownMsg {
+            amount: Uint128::new(1000),
+            pool_id: 1,
+        };
+        let info = mock_info(borrower.as_str(), &coins(1000, USDC));
+        let response = drawdown(deps.as_mut(), env.clone(), info, drawdown_msg).unwrap_err();
+        match response {
+            ContractError::CustomError { msg } if msg == "Pool not locked".to_string() => {}
+            e => panic!("Unexepected error: {}", e),
+        }
+    }
 }

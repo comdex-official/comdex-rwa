@@ -10,6 +10,7 @@ pub struct InstantiateMsg {
     pub reserves_addr: String,
     pub kyc_addr: String,
     pub denom: String,
+    pub decimals: u8,
 }
 
 #[cw_serde]
@@ -22,7 +23,7 @@ pub enum ExecuteMsg {
     LockPool { msg: LockPoolMsg },
     LockJuniorCapital { msg: LockJuniorCapitalMsg },
     SetKycContract { addr: String },
-    WhitelistToken { denom: String },
+    WhitelistToken { denom: String, decimals: u8 },
     SetSeniorPool { denom: String, addr: String },
 }
 
@@ -51,9 +52,9 @@ pub struct CreatePoolMsg {
 
 #[cw_serde]
 pub struct DepositMsg {
-    pub amount: Uint128,
     pub pool_id: u64,
     pub tranche_id: u64,
+    pub amount: Uint128,
 }
 
 #[cw_serde]
@@ -103,6 +104,7 @@ pub struct PoolResponse {
     pub borrower_name: String,
     pub assets: Uint128,
     pub denom: String,
+    pub decimals: u32,
     pub apr: Decimal,
     pub pool_type: PoolType,
     pub status: String,

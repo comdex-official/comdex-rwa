@@ -25,7 +25,7 @@ MSG='{"new_pool":{"msg":{"borrower":"<>","uid_token":"<>","interest_apr":500,"bo
 ## Deposit
 
 ```sh
-MSG='{"deposit":{"msg":{"amount":"","pool_id":null}}}'
+MSG='{"deposit":{"msg":{"amount":"","pool_id":1,"tranche_id":0}}}'
 ```
 
 ## Drawdown
