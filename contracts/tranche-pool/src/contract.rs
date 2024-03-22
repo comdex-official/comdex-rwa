@@ -5,8 +5,7 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     coins, to_json_binary, BankMsg, CosmosMsg, Decimal, Deps, DepsMut, Empty, Env, MessageInfo,
-    QueryRequest, Reply, Response, StdError, StdResult, SubMsg, Timestamp, Uint128, WasmMsg,
-    WasmQuery,
+    Reply, Response, StdError, StdResult, SubMsg, Timestamp, Uint128, WasmMsg,
 };
 
 use cw2::set_contract_version;
@@ -29,9 +28,7 @@ use crate::{
     },
     query::{get_config, get_nft_info, get_nft_owner},
     state::{
-        Config, CreditLine, InvestorToken, PoolSlice, PoolType, RepaymentInfo, TranchePool, CONFIG,
-        CREDIT_LINES, KYC_CONTRACT, POOL_SLICES, REPAYMENTS, RESERVE_ADDR, SENIOR_POOLS,
-        TRANCHE_POOLS, WHITELISTED_TOKENS,
+        Config, CreditLine, InvestorToken, PoolSlice, PoolType, RepaymentInfo, TranchePool, CONFIG, CREDIT_LINES, KYC_CONTRACT, PAY_CONTRACT, POOL_SLICES, REPAYMENTS, RESERVE_ADDR, SENIOR_POOLS, TRANCHE_POOLS, WHITELISTED_TOKENS
     },
 };
 
@@ -355,7 +352,6 @@ pub fn drawdown(
     Ok(Response::new().add_message(msg))
 }
 
-#[allow(unused_variables, unused_mut)]
 pub fn lock_junior_capital(
     deps: DepsMut,
     env: Env,
@@ -363,31 +359,29 @@ pub fn lock_junior_capital(
     msg: LockJuniorCapitalMsg,
 ) -> ContractResult<Response> {
     let mut slices = load_slices(deps.as_ref(), msg.pool_id)?;
-    if slices.is_empty() {
+    if slices.is_empty()
+        || slices.last().unwrap().is_locked()
+        || slices.last().unwrap().junior_tranche.locked_until != Timestamp::default()
+    {
         return Ok(Response::new());
     }
-
-    let pool = load_pool(deps.as_ref(), msg.pool_id)?;
-    let senior_pool_addr = SENIOR_POOLS
-        .load(deps.as_ref().storage, pool.denom.clone())
-        .map_err(|_| ContractError::SeniorPoolNotFound { denom: pool.denom })?;
 
     let cl = load_credit_line(deps.as_ref(), msg.pool_id)?;
 
     // calculate total junior pool deposits
-    let mut junior_deposits = Uint128::zero();
-    for slice in slices.iter_mut() {
-        if slice.junior_tranche.locked_until == Timestamp::default() {
-            continue;
-        }
-        junior_deposits = junior_deposits.checked_add(slice.junior_tranche.principal_deposited)?;
-        slice.junior_tranche.locked_until = env.block.time.plus_seconds(cl.drawdown_period);
-    }
+    let mut junior_deposits = slices.last().unwrap().junior_tranche.principal_deposited;
+    slices.last_mut().unwrap().junior_tranche.locked_until =
+        env.block.time.plus_seconds(cl.drawdown_period);
 
     let mut res = Response::new();
+    let pool = load_pool(deps.as_ref(), msg.pool_id)?;
     match pool.pool_type {
         PoolType::Junior => {}
         PoolType::Undefined => {
+            //let senior_pool_addr = SENIOR_POOLS
+            //.load(deps.as_ref().storage, pool.denom.clone())
+            //.map_err(|_| ContractError::SeniorPoolNotFound { denom: pool.denom })?;
+
             // query the leverage ratio
             //let query_msg = QueryRequest::Wasm(WasmQuery::Smart {
             //contract_addr: senior_pool_addr.to_string(),

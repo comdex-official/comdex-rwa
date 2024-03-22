@@ -142,6 +142,7 @@ pub struct RepaymentInfo {
     pub excess_amount: Uint128,
 }
 
+pub const PAY_CONTRACT: Item<Addr> = Item::new("rwa_pay_contract");
 pub const CONFIG: Item<Config> = Item::new("pool_config");
 pub const KYC_CONTRACT: Item<Addr> = Item::new("kyc_contract");
 pub const TRANCHE_POOLS: Map<u64, TranchePool> = Map::new("tranche_pools");

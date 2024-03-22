@@ -95,6 +95,29 @@ pub enum QueryMsg {
         start: Option<u64>,
         limit: Option<u8>,
     },
+    RepaymentInfo {
+        id: u64,
+    },
+}
+
+#[cw_serde]
+pub struct PoolInfo {
+    pub pool_id: u64,
+    pub pool_name: String,
+    pub borrower_name: String,
+    pub borrower: String,
+    pub assets: Uint128,
+    pub asset_info: Option<rwa_core::state::Asset>,
+    pub apr: Decimal,
+    pub pool_type: PoolType,
+    pub status: String,
+    pub invested: Uint128,
+    pub drawn: Uint128,
+    pub available_to_draw: Uint128,
+    pub interest_paid: Uint128,
+    pub interest_accrued: Uint128,
+    pub interest_pending: Uint128,
+    pub tranche_id: String,
 }
 
 #[cw_serde]
@@ -102,6 +125,7 @@ pub struct PoolResponse {
     pub pool_id: u64,
     pub pool_name: String,
     pub borrower_name: String,
+    pub borrower: String,
     pub assets: Uint128,
     pub denom: String,
     pub decimals: u32,

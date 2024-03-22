@@ -4,14 +4,14 @@ use cosmwasm_std::{
 };
 use cw721::{NftInfoResponse, OwnerOfResponse};
 use cw721_metadata_onchain::{InvestorToken, QueryMsg as Cw721QueryMsg};
+use rwa_core;
 
 use crate::{
     contract::load_slices,
     error::ContractResult,
-    msg::{AllPoolsResponse, PoolResponse, QueryMsg},
+    msg::{AllPoolsResponse, PoolInfo, PoolResponse, QueryMsg},
     state::{
-        Config, RepaymentInfo, TranchePool, CONFIG, CREDIT_LINES, POOL_SLICES, REPAYMENTS,
-        TRANCHE_POOLS, WHITELISTED_TOKENS,
+        Config, RepaymentInfo, CONFIG, CREDIT_LINES, PAY_CONTRACT, POOL_SLICES, REPAYMENTS, TRANCHE_POOLS, WHITELISTED_TOKENS
     },
 };
 
@@ -26,6 +26,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::GetAllPools { start, limit } => {
             to_json_binary(&get_all_pools(deps, env, start, limit)?)
         }
+        QueryMsg::RepaymentInfo { id } => to_json_binary(&get_repayment_info(deps, id)?),
     }
 }
 
@@ -33,8 +34,68 @@ pub fn get_config(deps: Deps, _env: Env) -> StdResult<Config> {
     CONFIG.load(deps.storage)
 }
 
-pub fn get_pool_info(deps: Deps, _env: Env, id: u64) -> StdResult<TranchePool> {
-    TRANCHE_POOLS.load(deps.storage, id)
+pub fn get_pool_info(deps: Deps, env: Env, id: u64) -> StdResult<Option<PoolInfo>> {
+    if !TRANCHE_POOLS.has(deps.storage, id) {
+        return Ok(None);
+    };
+    let pool = TRANCHE_POOLS.load(deps.storage, id)?;
+    let cl = CREDIT_LINES.load(deps.storage, id)?;
+    let slices = POOL_SLICES.load(deps.storage, id)?;
+
+    let invested = slices.iter().fold(Uint128::zero(), |acc, slice| {
+        acc.checked_add(slice.deposited().unwrap_or_default())
+            .unwrap_or_default()
+    });
+    let mut amount_available = Uint128::zero();
+    if let Some(slice) = slices.last() {
+        if slice.is_locked() && slice.senior_tranche.locked_until > env.block.time {
+            amount_available = slice.deposited().unwrap_or_default();
+        }
+    };
+    let mut _env = env.clone();
+    _env.block.time = cl.prev_due_date(&env).unwrap_or_default();
+    let interest_pending = cl.interest_owed(&_env).unwrap_or_default();
+
+    let tranche_id: String = if slices.is_empty() || slices.last().unwrap().is_locked() {
+        "".to_string()
+    } else {
+        slices.last().unwrap().junior_tranche.id.to_string()
+    };
+
+    let pay_contract = PAY_CONTRACT.load(deps.storage)?;
+    let query_msg = QueryRequest::Wasm(WasmQuery::Smart {
+        contract_addr: pay_contract.to_string(),
+        msg: to_json_binary(&rwa_core::msg::QueryMsg::GetConfig {  })?,
+    });
+
+    let rwa_config = deps.querier.query::<rwa_core::state::Config>(&query_msg)?;
+
+    let mut asset_info: Option<rwa_core::state::Asset> = None;
+    for asset in rwa_config.accepted_assets.iter() {
+        if asset.denom == pool.denom {
+            asset_info = Some(asset.to_owned());
+            break;
+        }
+    }
+
+    Ok(Some(PoolInfo {
+        pool_id: id,
+        pool_name: pool.pool_name,
+        borrower_name: pool.borrower_name,
+        borrower: pool.borrower_addr.to_string(),
+        assets: cl.borrow_info.borrowed_amount,
+        asset_info,
+        apr: Decimal::from_atomics(cl.interest_apr as u128, 2).unwrap_or_default(),
+        pool_type: pool.pool_type,
+        status: String::from("Open"),
+        invested,
+        drawn: cl.borrow_info.total_borrowed,
+        available_to_draw: amount_available,
+        interest_paid: cl.borrow_info.interest_repaid,
+        interest_accrued: cl.interest_accrued(&env).unwrap_or_default(),
+        interest_pending,
+        tranche_id,
+    }))
 }
 
 pub fn get_all_pools(
@@ -55,14 +116,15 @@ pub fn get_all_pools(
         };
         let pool = TRANCHE_POOLS.load(deps.storage, pool_id)?;
         let credit_line = CREDIT_LINES.load(deps.storage, pool_id)?;
-        let decimals = WHITELISTED_TOKENS.load(deps.storage, pool.denom.to_owned())?;
+        let token = WHITELISTED_TOKENS.load(deps.storage, pool.denom.to_owned())?;
         pools.push(PoolResponse {
             pool_id,
             pool_name: pool.pool_name,
             borrower_name: pool.borrower_name,
+            borrower: pool.borrower_addr.to_string(),
             assets: credit_line.borrow_info.borrowed_amount,
             denom: pool.denom,
-            decimals: decimals.1,
+            decimals: token.1,
             apr: Decimal::from_atomics(credit_line.interest_apr as u128, 2)
                 .map_err(|_| StdError::generic_err("interest apr conversion error"))?,
             pool_type: pool.pool_type,
@@ -144,4 +206,8 @@ pub fn total_value_locked(deps: Deps) -> StdResult<Uint128> {
             .unwrap_or_else(|_| locked_amount);
     }
     Ok(locked_amount)
+}
+
+pub fn repayment_info(deps: Deps, env: Env, id: u64) -> StdResult<Vec<RepaymentInfo>> {
+    REPAYMENTS.load(deps.storage, id)
 }

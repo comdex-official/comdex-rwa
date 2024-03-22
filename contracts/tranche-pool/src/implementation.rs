@@ -145,7 +145,7 @@ impl TrancheInfo {
     }
 
     pub fn is_senior_tranche(&self) -> bool {
-        if self.id % 2 == 0 {
+        if self.id % 2 == 1 {
             true
         } else {
             false
