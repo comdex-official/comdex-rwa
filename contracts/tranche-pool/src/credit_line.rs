@@ -79,7 +79,7 @@ impl CreditLine {
         self.checkpoint(env)?;
         self.borrow_info.borrowed_amount = total_amount;
         self.borrow_info.total_borrowed = self.borrow_info.total_borrowed.checked_add(amount)?;
-        if !self.is_late(env)? {
+        if self.is_late(env)? {
             return Err(ContractError::CustomError {
                 msg: "Drawdown not allowed when payments are due".to_string(),
             });
@@ -371,6 +371,11 @@ impl CreditLine {
         // repay principal and interest
         let current_interest_owed = self.interest_owed(env)?;
         let current_principal_owed = self.principal_owed(env)?;
+        if current_interest_owed.is_zero() && current_principal_owed.is_zero() {
+            return Err(ContractError::CustomError {
+                msg: "Nothing owed at the moment".to_string(),
+            });
+        }
         if amount >= current_interest_owed {
             self.borrow_info
                 .interest_repaid
@@ -393,6 +398,8 @@ impl CreditLine {
             repayment_info.principal_repaid = amount;
             repayment_info.principal_pending = current_principal_owed - amount;
         }
+
+        repayment_info.excess_amount = amount;
 
         self.borrow_info.interest_repaid = self
             .borrow_info

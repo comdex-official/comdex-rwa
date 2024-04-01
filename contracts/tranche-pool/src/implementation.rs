@@ -162,6 +162,9 @@ impl TrancheInfo {
         amount: Uint128,
         slice: &PoolSlice,
     ) -> ContractResult<Decimal> {
+        if self.principal_deposited.is_zero() {
+            return Ok(Decimal::zero())
+        };
         let share_price = usdc_to_share_price(amount, self.principal_deposited)?;
         self.scale_by_percent_ownership(share_price, slice)
     }

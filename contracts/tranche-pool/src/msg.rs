@@ -25,6 +25,8 @@ pub enum ExecuteMsg {
     SetKycContract { addr: String },
     WhitelistToken { denom: String, decimals: u8 },
     SetSeniorPool { denom: String, addr: String },
+    Withdraw { msg: WithdrawMsg },
+    WithdrawAll { pool_id: u64 },
 }
 
 #[cw_serde]
@@ -98,6 +100,12 @@ pub enum QueryMsg {
     RepaymentInfo {
         id: u64,
     },
+    GetCreditLine {
+        id: u64,
+    },
+    GetSlices {
+        id: u64,
+    },
 }
 
 #[cw_serde]
@@ -117,7 +125,10 @@ pub struct PoolInfo {
     pub interest_paid: Uint128,
     pub interest_accrued: Uint128,
     pub interest_pending: Uint128,
+    pub borrow_limit: Uint128,
     pub tranche_id: String,
+    pub junior_capital_locked: bool,
+    pub pool_locked: bool,
 }
 
 #[cw_serde]

@@ -296,16 +296,17 @@ pub fn has_kyc(deps: Deps, user: Addr) -> ContractResult<bool> {
 }
 
 pub fn usdc_to_share_price(amount: Uint128, total_shares: Uint128) -> ContractResult<Decimal> {
-    Ok(Decimal::new(
-        amount
-            .checked_mul(SCALING_FACTOR.into())?
-            .checked_div(total_shares)?,
-    ))
+    Ok(Decimal::from_atomics(amount, 0)?.checked_div(Decimal::from_atomics(total_shares, 0)?)?)
+    //Ok(Decimal::new(
+    //amount
+    //.checked_mul(SCALING_FACTOR.into())?
+    //.checked_div(total_shares)?,
+    //))
 }
 
 pub fn share_price_to_usdc(share_price: Decimal, total_shares: Uint128) -> ContractResult<Uint128> {
     Ok(share_price
-        .checked_mul(Decimal::new(total_shares))?
+        .checked_mul(Decimal::from_atomics(total_shares, 0)?)?
         .to_uint_floor())
 }
 
@@ -314,8 +315,8 @@ pub fn scale_by_fraction(
     numerator: Uint128,
     denominator: Uint128,
 ) -> ContractResult<Decimal> {
-    let numerator_decimal = Decimal::new(numerator);
-    let denominator_decimal = Decimal::new(denominator);
+    let numerator_decimal = Decimal::from_atomics(numerator, 0)?;
+    let denominator_decimal = Decimal::from_atomics(denominator, 0)?;
     Ok(numerator_decimal
         .checked_div(denominator_decimal)?
         .checked_mul(share_price)?)

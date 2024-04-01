@@ -1,8 +1,8 @@
 use cosmwasm_std::{
     to_json_binary, Addr, Binary, Decimal, Deps, Env, Order, QueryRequest, StdError, StdResult,
-    Uint128, WasmQuery,
+    Timestamp, Uint128, WasmQuery,
 };
-use cw721::{NftInfoResponse, OwnerOfResponse};
+use cw721::{NftInfoResponse, OwnerOfResponse, TokensResponse};
 use cw721_metadata_onchain::{InvestorToken, QueryMsg as Cw721QueryMsg};
 use rwa_core;
 
@@ -11,7 +11,8 @@ use crate::{
     error::ContractResult,
     msg::{AllPoolsResponse, PoolInfo, PoolResponse, QueryMsg},
     state::{
-        Config, RepaymentInfo, CONFIG, CREDIT_LINES, PAY_CONTRACT, POOL_SLICES, REPAYMENTS, TRANCHE_POOLS, WHITELISTED_TOKENS
+        Config, CreditLine, PoolSlice, RepaymentInfo, CONFIG, CREDIT_LINES, PAY_CONTRACT,
+        POOL_SLICES, REPAYMENTS, TRANCHE_POOLS, WHITELISTED_TOKENS,
     },
 };
 
@@ -27,6 +28,8 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             to_json_binary(&get_all_pools(deps, env, start, limit)?)
         }
         QueryMsg::RepaymentInfo { id } => to_json_binary(&get_repayment_info(deps, id)?),
+        QueryMsg::GetCreditLine { id } => to_json_binary(&get_credit_line(deps, env, id)?),
+        QueryMsg::GetSlices { id } => to_json_binary(&get_slices(deps, env, id)?),
     }
 }
 
@@ -46,10 +49,19 @@ pub fn get_pool_info(deps: Deps, env: Env, id: u64) -> StdResult<Option<PoolInfo
         acc.checked_add(slice.deposited().unwrap_or_default())
             .unwrap_or_default()
     });
+    let mut junior_capital_locked = false;
+    let mut pool_locked = false;
     let mut amount_available = Uint128::zero();
     if let Some(slice) = slices.last() {
+        if slice.junior_tranche.locked_until != Timestamp::default() {
+            junior_capital_locked = true;
+        }
         if slice.is_locked() && slice.senior_tranche.locked_until > env.block.time {
-            amount_available = slice.deposited().unwrap_or_default();
+            pool_locked = true;
+            amount_available = slice
+                .deposited()
+                .unwrap_or_default()
+                .saturating_sub(slice.principal_deployed);
         }
     };
     let mut _env = env.clone();
@@ -65,7 +77,7 @@ pub fn get_pool_info(deps: Deps, env: Env, id: u64) -> StdResult<Option<PoolInfo
     let pay_contract = PAY_CONTRACT.load(deps.storage)?;
     let query_msg = QueryRequest::Wasm(WasmQuery::Smart {
         contract_addr: pay_contract.to_string(),
-        msg: to_json_binary(&rwa_core::msg::QueryMsg::GetConfig {  })?,
+        msg: to_json_binary(&rwa_core::msg::QueryMsg::GetConfig {})?,
     });
 
     let rwa_config = deps.querier.query::<rwa_core::state::Config>(&query_msg)?;
@@ -95,6 +107,9 @@ pub fn get_pool_info(deps: Deps, env: Env, id: u64) -> StdResult<Option<PoolInfo
         interest_accrued: cl.interest_accrued(&env).unwrap_or_default(),
         interest_pending,
         tranche_id,
+        borrow_limit: cl.borrow_info.borrow_limit,
+        junior_capital_locked,
+        pool_locked,
     }))
 }
 
@@ -210,4 +225,46 @@ pub fn total_value_locked(deps: Deps) -> StdResult<Uint128> {
 
 pub fn repayment_info(deps: Deps, env: Env, id: u64) -> StdResult<Vec<RepaymentInfo>> {
     REPAYMENTS.load(deps.storage, id)
+}
+
+pub fn get_credit_line(deps: Deps, env: Env, id: u64) -> StdResult<CreditLine> {
+    CREDIT_LINES.load(deps.storage, id)
+}
+
+pub fn get_slices(deps: Deps, env: Env, id: u64) -> StdResult<Vec<PoolSlice>> {
+    POOL_SLICES.load(deps.storage, id)
+}
+
+pub fn get_investments(
+    deps: Deps,
+    env: Env,
+    user: String,
+    pool_id: u64,
+) -> StdResult<Vec<InvestorToken>> {
+    let query_msg = Cw721QueryMsg::Tokens {
+        owner: user,
+        start_after: None,
+        limit: None,
+    };
+    let config = get_config(deps.clone(), env.clone())?;
+    let result = deps
+        .querier
+        .query::<TokensResponse>(&QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: config.token_issuer.to_string(),
+            msg: to_json_binary(&query_msg)?,
+        }))?;
+    let mut investments = Vec::new();
+    for token_id in result.tokens.iter() {
+        let token_info = get_nft_info(
+            deps.clone(),
+            env.clone(),
+            token_id.parse::<u64>().map_err(|_| {
+                StdError::generic_err(format!("Unable to parse {token_id} into integer"))
+            })?,
+        )?;
+        if token_info.pool_id == pool_id {
+            investments.push(token_info);
+        }
+    }
+    Ok(investments)
 }

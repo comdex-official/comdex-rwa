@@ -100,6 +100,7 @@ pub enum PaymentFrequency {
     Quaterly,
     Biannually,
     Annually,
+    Custom(u64),
 }
 
 impl PaymentFrequency {
@@ -109,6 +110,7 @@ impl PaymentFrequency {
             PaymentFrequency::Quaterly => 90u64 * 3600u64 * 24,
             PaymentFrequency::Biannually => 180u64 * 3600u64 * 24,
             PaymentFrequency::Annually => 360u64 * 3600u64 * 24,
+            PaymentFrequency::Custom(val) => *val,
         }
     }
 }

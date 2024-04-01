@@ -13,7 +13,6 @@ use cw721_base::{
     ExecuteMsg as Cw721BaseExecuteMsg, InstantiateMsg as Cw721IntantiateMsg, MintMsg,
 };
 use cw_utils::parse_reply_instantiate_data;
-//use cw721_metadata_onchain::msg::ExecuteMsg as Cw721ExecuteMsg;
 
 use crate::{
     error::{ContractError, ContractResult},
@@ -26,9 +25,11 @@ use crate::{
         CreatePoolMsg, DepositMsg, DrawdownMsg, ExecuteMsg, InstantiateMsg, LockJuniorCapitalMsg,
         LockPoolMsg, MigrateMsg, RepayMsg, WithdrawMsg,
     },
-    query::{get_config, get_nft_info, get_nft_owner},
+    query::{get_config, get_investments, get_nft_info, get_nft_owner},
     state::{
-        Config, CreditLine, InvestorToken, PoolSlice, PoolType, RepaymentInfo, TranchePool, CONFIG, CREDIT_LINES, KYC_CONTRACT, PAY_CONTRACT, POOL_SLICES, REPAYMENTS, RESERVE_ADDR, SENIOR_POOLS, TRANCHE_POOLS, WHITELISTED_TOKENS
+        Config, CreditLine, InvestorToken, PoolSlice, PoolType, RepaymentInfo, TranchePool, CONFIG,
+        CREDIT_LINES, KYC_CONTRACT, POOL_SLICES, REPAYMENTS, RESERVE_ADDR, SENIOR_POOLS,
+        TRANCHE_POOLS, WHITELISTED_TOKENS,
     },
 };
 
@@ -133,6 +134,8 @@ pub fn execute(
         ExecuteMsg::WhitelistToken { denom, decimals } => {
             whitelist_token(deps, info, denom, decimals)
         }
+        ExecuteMsg::Withdraw { msg } => withdraw(deps, env, info, msg),
+        ExecuteMsg::WithdrawAll { pool_id } => withdraw_all(deps, env, info, pool_id),
         _ => todo!(),
     }
 }
@@ -293,6 +296,7 @@ pub fn drawdown(
     info: MessageInfo,
     msg: DrawdownMsg,
 ) -> ContractResult<Response> {
+    ensure_empty_funds(&info)?;
     ensure_drawdown_unpaused(deps.as_ref())?;
     ensure_kyc(deps.as_ref(), info.sender.clone())?;
 
@@ -344,12 +348,16 @@ pub fn drawdown(
         .senior_tranche
         .expected_share_price(remaining_amount, &top_slice)?;
     top_slice.principal_deployed = top_slice.principal_deployed.checked_add(msg.amount)?;
+    POOL_SLICES.save(deps.storage, msg.pool_id, &slices)?;
 
     let msg = CosmosMsg::Bank(BankMsg::Send {
         to_address: info.sender.to_string(),
         amount: coins(msg.amount.u128(), pool.denom.clone()),
     });
-    Ok(Response::new().add_message(msg))
+    Ok(Response::new()
+        .add_attribute("method", "drawdown".to_string())
+        .add_attribute("borrower", info.sender.to_string())
+        .add_message(msg))
 }
 
 pub fn lock_junior_capital(
@@ -469,7 +477,8 @@ pub fn lock_pool(
         .add_attribute("borrower", info.sender.to_string())
         .add_attribute("pool_id", msg.pool_id.to_string())
         .add_attribute("junior_tranche", junior_tranche_id.to_string())
-        .add_attribute("senior_tranche", senior_tranche_id.to_string()))
+        .add_attribute("senior_tranche", senior_tranche_id.to_string())
+        .add_attribute("amount_locked", tranche_deposit.to_string()))
 }
 
 pub fn repay(
@@ -501,6 +510,11 @@ pub fn repay(
     }
 
     let mut credit_line = load_credit_line(deps.as_ref(), msg.pool_id)?;
+    if credit_line.borrow_info.total_borrowed.is_zero() {
+        return Err(ContractError::CustomError {
+            msg: "Repayment not allowed when not borrowed".to_string(),
+        });
+    }
     let repayment_info = credit_line.repay(msg.amount, &env)?;
     CREDIT_LINES.save(deps.storage, msg.pool_id, &credit_line)?;
     let interest_accrued = repayment_info.interest_repaid + repayment_info.interest_pending;
@@ -705,6 +719,93 @@ pub fn withdraw(
         .add_attribute("denom", pool.denom)
         .add_message(bank_msg)
         .add_message(wasm_msg))
+}
+
+pub fn withdraw_all(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    pool_id: u64,
+) -> ContractResult<Response> {
+    // query all nft for the user
+    let investments =
+        get_investments(deps.as_ref(), env.clone(), info.sender.to_string(), pool_id)?;
+    let mut slices = load_slices(deps.as_ref(), pool_id)?;
+    let pool = load_pool(deps.as_ref(), pool_id)?;
+    let mut response = Response::new();
+    let mut interest_withdrawn = Uint128::zero();
+    let mut principal_withdrawn = Uint128::zero();
+    for investor_token in investments.into_iter() {
+        let tranche_info = get_tranche_info(investor_token.tranche_id, &mut slices)?;
+
+        let (interest_redeemable, principal_redeemable) =
+            tranche_info.redeemable_interest_and_amount(&investor_token)?;
+        let total_redeemable = interest_redeemable.checked_add(principal_redeemable)?;
+
+        //if msg.amount.is_some() && *msg.amount.as_ref().unwrap() > total_redeemable {
+        //return Err(ContractError::CustomError {
+        //msg: "Redemption amount exceeds redeemable".to_string(),
+        //});
+        //}
+        if env.block.time <= tranche_info.locked_until {
+            return Err(ContractError::LockedPoolWithdrawal);
+        }
+
+        let config = get_config(deps.as_ref(), env.clone())?;
+        let amount = Uint128::MAX;
+        let mut wasm_msg: CosmosMsg<Empty>;
+        if tranche_info.locked_until == Timestamp::default() {
+            tranche_info.principal_deposited =
+                tranche_info.principal_deposited.checked_sub(amount)?;
+            principal_withdrawn = amount;
+
+            let withdraw_msg = Cw721ExecuteMsg::WithdrawPrincipal {
+                token_id: investor_token.token_id.to_string(),
+                principal_amount: amount,
+            };
+            wasm_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: config.token_issuer.to_string(),
+                msg: to_json_binary(&withdraw_msg)?,
+                funds: vec![],
+            });
+        } else {
+            interest_withdrawn = std::cmp::min(interest_redeemable, amount);
+            principal_withdrawn = std::cmp::min(
+                principal_redeemable,
+                amount.checked_sub(interest_withdrawn)?,
+            );
+
+            let redeem_msg = Cw721ExecuteMsg::Redeem {
+                token_id: investor_token.token_id.to_string(),
+                principal_redeemed: principal_withdrawn,
+                interest_redeemed: interest_withdrawn,
+            };
+            wasm_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: config.token_issuer.to_string(),
+                msg: to_json_binary(&redeem_msg)?,
+                funds: vec![],
+            });
+        }
+
+        let bank_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: info.sender.to_string(),
+            amount: coins(
+                { interest_withdrawn + principal_withdrawn }.u128(),
+                pool.denom.clone(),
+            ),
+        });
+        response = response.add_message(wasm_msg);
+        response = response.add_message(bank_msg);
+    }
+
+    POOL_SLICES.save(deps.storage, pool_id, &slices)?;
+
+    Ok(response
+        .add_attribute("method", "withdraw")
+        .add_attribute("user", info.sender.into_string())
+        .add_attribute("interest_withdrawn", interest_withdrawn.to_string())
+        .add_attribute("principal_withdrawn", principal_withdrawn.to_string())
+        .add_attribute("denom", pool.denom))
 }
 
 pub fn whitelist_token(
@@ -947,10 +1048,13 @@ mod tests {
         let deposit_msg = DepositMsg {
             amount: Uint128::new(10000000000),
             pool_id: 1,
-            tranche_id: 1,
+            tranche_id: 0,
         };
         let info = mock_info("backer1", &coins(10000000000, USDC));
         let response = deposit(deps.as_mut(), env.clone(), info, deposit_msg).unwrap();
+
+        // Slices
+        // Credit Line
     }
 
     #[test]
@@ -982,11 +1086,84 @@ mod tests {
             amount: Uint128::new(1000),
             pool_id: 1,
         };
-        let info = mock_info(borrower.as_str(), &coins(1000, USDC));
+        let info = mock_info(borrower.as_str(), &[]);
         let response = drawdown(deps.as_mut(), env.clone(), info, drawdown_msg).unwrap_err();
         match response {
             ContractError::CustomError { msg } if msg == "Pool not locked".to_string() => {}
             e => panic!("Unexepected error: {}", e),
         }
+    }
+
+    #[test]
+    fn test_drawdown() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = mock_info("admin", &[]);
+
+        let msg = init_msg();
+        let result = instantiate(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+
+        let borrower = Addr::unchecked("borrower");
+
+        WHITELISTED_TOKENS
+            .save(deps.as_mut().storage, USDC.to_string(), &(true, 1000000))
+            .unwrap();
+
+        SENIOR_POOLS
+            .save(
+                deps.as_mut().storage,
+                USDC.to_string(),
+                &Addr::unchecked("usdc_senior_pool"),
+            )
+            .unwrap();
+
+        // Create Pool
+        let pool_msg = create_pool_msg();
+        let info = mock_info(borrower.as_str(), &[]);
+        let response = create_pool(deps.as_mut(), env.clone(), info.clone(), pool_msg).unwrap();
+
+        // Deposit
+        let info = mock_info("user1", &coins(MIN_DEPOSIT.u128(), USDC.to_string()));
+        let deposit_msg = DepositMsg {
+            pool_id: 1,
+            tranche_id: 0,
+            amount: info.funds[0].amount.clone(),
+        };
+        let response = deposit(deps.as_mut(), env.clone(), info, deposit_msg).unwrap();
+
+        // Lock junior capital
+        let info = mock_info(borrower.as_str(), &[]);
+        let lock_junior_capital_msg = LockJuniorCapitalMsg { pool_id: 1 };
+        let response =
+            lock_junior_capital(deps.as_mut(), env.clone(), info, lock_junior_capital_msg).unwrap();
+
+        // Lock Pool
+        let info = mock_info(borrower.as_str(), &[]);
+        let lock_pool_msg = LockPoolMsg { pool_id: 1 };
+        let response = lock_pool(deps.as_mut(), env.clone(), info, lock_pool_msg).unwrap();
+
+        let slices = load_slices(deps.as_ref(), 1).unwrap();
+        assert_eq!(slices[0].junior_tranche.principal_deposited, MIN_DEPOSIT);
+        assert_eq!(
+            slices[0].junior_tranche.principal_deposited
+                * slices[0].junior_tranche.principal_share_price,
+            slices[0].junior_tranche.principal_deposited,
+            "Junior Tranche calc error"
+        );
+
+        assert_eq!(
+            slices[0].senior_tranche.principal_deposited
+                * slices[0].senior_tranche.principal_share_price,
+            slices[0].senior_tranche.principal_deposited,
+            "Senior Tranche calc error"
+        );
+
+        // Drawdown
+        let drawdown_msg = DrawdownMsg {
+            amount: Uint128::new(10000),
+            pool_id: 1,
+        };
+        let info = mock_info(borrower.as_str(), &[]);
+        let response = drawdown(deps.as_mut(), env.clone(), info, drawdown_msg).unwrap();
     }
 }
