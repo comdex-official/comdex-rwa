@@ -102,8 +102,6 @@ pub fn accept_request(
         .may_load(deps.storage, &address)?
         .ok_or_else(|| StdError::generic_err("Requestor Profile does not exist"))?; // Assuming ContactInfo::new() is defined.
 
-
-
     let mut index = 0;
     for contact in requested_contact_info.sent_requests.iter() {
         if contact == info.sender {
@@ -166,5 +164,30 @@ pub fn create_profile(
 
     Ok(Response::new()
         .add_attribute("method", "create_profile")
+        .add_attribute("sender", info.sender))
+}
+
+pub fn update_kyc(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    address: Addr,
+    kyc_status: KYCStatus,
+) -> Result<Response, ContractError> {
+    //// do not accept funds ////
+    if !info.funds.is_empty() {
+        return Err(StdError::generic_err("Funds not accepted").into());
+    }
+
+    let mut contact_info = CONTACT_INFO
+        .may_load(deps.storage, &address)?
+        .ok_or_else(|| StdError::generic_err("Profile does not exist"))?;
+
+    contact_info.kyc_status = kyc_status;
+
+    CONTACT_INFO.save(deps.storage, &address, &contact_info)?;
+
+    Ok(Response::new()
+        .add_attribute("method", "update_kyc")
         .add_attribute("sender", info.sender))
 }

@@ -24,7 +24,6 @@ pub fn get_contact_info(deps: Deps, address: Addr) -> StdResult<ContactInfo> {
     Ok(contact_info)
 }
 
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct RequestResponse {
@@ -38,7 +37,6 @@ pub struct InvoiceResponse {
     pub invoice: Invoice,
     pub contact: ContactResponse,
 }
-
 
 pub fn get_pending_invoices(deps: Deps, address: Addr) -> StdResult<RequestResponse> {
     let contact_info = CONTACT_INFO.may_load(deps.storage, &address)?;
@@ -145,7 +143,6 @@ pub fn get_executed_invoices(deps: Deps, address: Addr) -> StdResult<RequestResp
         received_invoices,
     })
 }
-
 
 pub fn get_total_receivables(deps: Deps, address: Addr) -> StdResult<Vec<Coin>> {
     let contact_info = CONTACT_INFO.may_load(deps.storage, &address)?;

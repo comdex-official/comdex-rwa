@@ -1,5 +1,5 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::Uint128;
+use cosmwasm_std::{Uint128,Addr};
 
 #[cw_serde]
 pub struct InstantiateMsg {
@@ -9,11 +9,20 @@ pub struct InstantiateMsg {
 
 #[cw_serde]
 pub enum ExecuteMsg {
-    Tx1 {},
+    Deposit(DepositMsg),
+    Withdraw { amount: Uint128 },
+    Invest { pool_id: u64 ,tranche_id: u64, amount: Uint128 },    
 }
 
 #[cw_serde]
-pub enum QueryMsg {}
+pub enum QueryMsg {
+    GetUserDeposits { address: Addr },
+    GetConfig {},
+    GetFundInfo {},
+    MaxLeverageRatio {},
+    
+
+}
 
 #[cw_serde]
 pub struct DepositMsg {
