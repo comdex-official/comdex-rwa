@@ -1,8 +1,3 @@
-// TODO
-// * Deposit
-//   - return lp_token
-
-
 pub mod contract;
 pub mod error;
 pub mod msg;

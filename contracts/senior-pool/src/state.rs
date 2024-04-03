@@ -8,6 +8,8 @@ use crate::ContractResult;
 #[cw_serde]
 pub struct Config {
     pub lp_token: String,
+    pub nft_token_issuer: String,
+    pub junior_pools: String,
     pub pool_denom: String,
     pub max_leverage_ratio: Decimal,
 }
