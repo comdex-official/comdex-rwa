@@ -30,6 +30,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::RepaymentInfo { id } => to_json_binary(&get_repayment_info(deps, id)?),
         QueryMsg::GetCreditLine { id } => to_json_binary(&get_credit_line(deps, env, id)?),
         QueryMsg::GetSlices { id } => to_json_binary(&get_slices(deps, env, id)?),
+        QueryMsg::GetInvestmentInfo {token_id} => to_json_binary(&get_nft_info(deps, env, token_id)?)
     }
 }
 

@@ -106,6 +106,9 @@ pub enum QueryMsg {
     GetSlices {
         id: u64,
     },
+    GetInvestmentInfo {
+        token_id: u64,
+    },
 }
 
 #[cw_serde]
