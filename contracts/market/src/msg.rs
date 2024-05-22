@@ -17,6 +17,7 @@ pub enum ExecuteMsg {
     TokenSellOrder { amount: Uint128, denom: String, price: Coin },
     /// Executed when buying a listed asset.
     BuyOrder { order_id: u64 },
+    CancelOrder { order_id: u64 },
 }
 
 #[cw_serde]

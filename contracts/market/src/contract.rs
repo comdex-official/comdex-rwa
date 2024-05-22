@@ -13,7 +13,7 @@ use cw721_metadata_onchain::ExecuteMsg as Cw721ExecuteMsg;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{Asset, Config, Order, ADMIN, CONFIG, ORDERS, SENIOR_POOLS};
+use crate::state::{Asset, Config, Order, Status, ADMIN, CONFIG, ORDERS, SENIOR_POOLS};
 
 // version info for migration info
 const CONTRACT_NAME: &str = "market";
@@ -71,10 +71,16 @@ pub fn execute(
             denom,
             price,
         } => token_sell_order(deps, env, info, amount, denom, price),
-        _ => unimplemented!(),
+        ExecuteMsg::BuyOrder { order_id } => execute_buy_order(deps, env, info, order_id),
+        ExecuteMsg::CancelOrder { order_id } => cancel_order(deps, env, info, order_id),
     }
 }
 
+/// Working:
+/// 1. Check if enough cw20 is owned by the user
+/// 2. Create a new sell order
+/// 3. Transfer cw20 to this contract, requires that the contract is allowed by the user to
+///    transfer tokens.
 pub fn token_sell_order(
     deps: DepsMut,
     env: Env,
@@ -119,6 +125,7 @@ pub fn token_sell_order(
             amount,
         },
         seller: info.sender.clone(),
+        status: Status::Pending,
     };
     ORDERS.save(deps.storage, order.id, &order)?;
 
@@ -147,9 +154,14 @@ pub fn token_sell_order(
         .add_message(wasm_execute_msg))
 }
 
+/// Working:
+/// 1. Check if the nft is owned by the user
+/// 2. Create a new sell order
+/// 3. Transfer the nft to this contract, requires that the contract is allowed by the user to
+///    transfer the nft.
 pub fn nft_sell_order(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     token_id: String,
     price: Coin,
@@ -187,13 +199,14 @@ pub fn nft_sell_order(
         price: price.clone(),
         asset_class: Asset::Nft(token_id.clone()),
         seller: info.sender.clone(),
+        status: Status::Pending,
     };
     ORDERS.save(deps.storage, order.id, &order)?;
 
     let transfer_msg = WasmMsg::Execute {
         contract_addr: config.nft_contract.to_string(),
         msg: to_json_binary(&Cw721ExecuteMsg::Base(Cw721BaseExecuteMsg::TransferNft {
-            recipient: info.sender.to_string(),
+            recipient: env.contract.address.to_string(),
             token_id: order.asset_class.get_nft_id()?,
         }))?,
         funds: vec![],
@@ -210,6 +223,11 @@ pub fn nft_sell_order(
         .add_message(transfer_msg))
 }
 
+/// Working:
+/// 1. Check if the order exists and is pending
+/// 2. Funds should match the sell price
+/// 3. Transfer asset to the buyer
+/// 4. Transfer funds to the seller
 pub fn execute_buy_order(
     deps: DepsMut,
     _env: Env,
@@ -235,7 +253,7 @@ pub fn execute_buy_order(
         }
     };
 
-    let order = ORDERS.load(deps.storage, order_id)?;
+    let mut order = ORDERS.load(deps.storage, order_id)?;
 
     if order.price.amount.u128() != info.funds[0].amount.u128() {
         return Err(ContractError::CustomError {
@@ -247,11 +265,17 @@ pub fn execute_buy_order(
         });
     }
 
-    // Transfer asset to buyer
-    // !-------
-    // Update nft and cw20 contract to include a special txn
-    // for asset transfer.
-    // -------!
+    match order.status {
+        Status::Cancelled | Status::Completed => {
+            return Err(ContractError::CustomError {
+                msg: "Order has been cancelled or fulfilled".to_string(),
+            })
+        }
+        Status::Pending => {}
+    };
+    order.status = Status::Completed;
+    ORDERS.save(deps.storage, order_id, &order)?;
+
     let transfer_msg: CosmosMsg = if order.asset_class.is_cw20() {
         let token_contract =
             SENIOR_POOLS.load(deps.storage, order.asset_class.get_token_denom()?)?;
@@ -293,6 +317,72 @@ pub fn execute_buy_order(
             ("seller", order.seller.as_str()),
         ])
         .add_messages(vec![bank_msg, transfer_msg]))
+}
+
+pub fn cancel_order(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    order_id: u64,
+) -> Result<Response, ContractError> {
+    if !info.funds.is_empty() {
+        return Err(ContractError::CustomError {
+            msg: "Funds not allowed".to_string(),
+        });
+    }
+
+    let mut order = ORDERS
+        .may_load(deps.storage, order_id)?
+        .ok_or(ContractError::CustomError {
+            msg: "Invalid order ID".to_string(),
+        })?;
+
+    if order.seller != info.sender {
+        return Err(ContractError::CustomError {
+            msg: "Only seller can cancel the order".to_string(),
+        });
+    }
+
+    order.status = Status::Cancelled;
+
+    ORDERS.save(deps.storage, order_id, &order)?;
+
+    // transfer the asset back to seller
+    let transfer_msg: CosmosMsg = match order.asset_class {
+        Asset::Nft(token_id) => {
+            let config = CONFIG.load(deps.storage)?;
+
+            WasmMsg::Execute {
+                contract_addr: config.nft_contract.to_string(),
+                msg: to_json_binary(&Cw721ExecuteMsg::Base(Cw721BaseExecuteMsg::TransferNft {
+                    recipient: order.seller.to_string(),
+                    token_id,
+                }))?,
+                funds: vec![],
+            }
+            .into()
+        }
+        Asset::Cw20 { denom, amount } => {
+            let token_contract = SENIOR_POOLS.load(deps.storage, denom.clone())?;
+
+            WasmMsg::Execute {
+                contract_addr: token_contract.to_string(),
+                msg: to_json_binary(&Cw20ExecuteMsg::Transfer {
+                    recipient: order.seller.to_string(),
+                    amount,
+                })?,
+                funds: vec![],
+            }
+            .into()
+        }
+    };
+
+    Ok(Response::new()
+        .add_attributes(vec![
+            ("method", "cancel_order"),
+            ("seller", order.seller.as_str()),
+        ])
+        .add_message(transfer_msg))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

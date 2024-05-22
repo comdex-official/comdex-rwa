@@ -64,11 +64,19 @@ impl Asset {
 }
 
 #[cw_serde]
+pub enum Status {
+    Pending,
+    Completed,
+    Cancelled
+}
+
+#[cw_serde]
 pub struct Order {
     pub id: u64,
     pub price: Coin,
     pub asset_class: Asset,
     pub seller: Addr,
+    pub status: Status,
 }
 
 pub const CONFIG: Item<Config> = Item::new("config");
